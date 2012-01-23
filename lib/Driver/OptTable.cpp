@@ -185,6 +185,41 @@ Option *OptTable::CreateOption(unsigned id) const {
   return Opt;
 }
 
+// Index is just a padding argument, no real meaning...
+Arg *OptTable::ParseOneArgTrap(const ArgList &Args, unsigned &Index,
+                               const char *Str) const {
+  unsigned Prev = Index;
+  // Anything that doesn't start with '-' is an input, as is '-' itself.
+  if (Str[0] != '-' || Str[1] == '\0')
+    return new Arg(TheInputOption, Index++, Str);
+
+  const Info *Start = OptionInfos + FirstSearchableIndex;
+  const Info *End = OptionInfos + getNumOptions();
+
+  // Search for the first next option which could be a prefix.
+  Start = std::lower_bound(Start, End, Str);
+
+  for (; Start != End; ++Start) {
+    // Scan for first option which is a proper prefix.
+    for (; Start != End; ++Start) {
+      if (memcmp(Str, Start->Name, strlen(Start->Name)) == 0)
+        break;
+    }
+    if (Start == End)
+      break;
+
+    // -lxxx, just tease out 'xxx' part...
+    const char *strPart = Str + 2;
+    return new Arg(getOption(Start - OptionInfos + 1), Index++, strPart);
+
+    // Otherwise, see if this argument was missing values.
+    if (Prev != Index)
+      return 0;
+  }
+
+  return new Arg(TheUnknownOption, Index++, Str);
+}
+
 Arg *OptTable::ParseOneArg(const ArgList &Args, unsigned &Index) const {
   unsigned Prev = Index;
   const char *Str = Args.getArgString(Index);
