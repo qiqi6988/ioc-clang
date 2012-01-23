@@ -107,6 +107,20 @@ public:
   unsigned ElideConstructors : 1; // Whether C++ copy constructors should be
                                   // elided if possible.
   unsigned CatchUndefined    : 1; // Generate code to check for undefined ops.
+  unsigned CatchUndefinedAnsiC    : 1; // Generate checks for arithmetic
+                                       // ops of C program upon AnsiC standard.
+  unsigned CatchUndefinedC99    : 1; // Generate checks for arithmetic
+                                     // ops of C program upon C99 standard.
+  unsigned CatchUndefinedCXX0X    : 1; // Generate checks for arithmetic
+                                       // ops of C++ program upon CXX0X.
+  unsigned CatchUndefinedCXX98    : 1; // Generate checks for arithmetic
+                                       // ops of C++ program upon CXX98.
+  unsigned CatchNonArithUndefined    : 1; // Generate checks for
+                                          // non-arithmetic ops.
+  unsigned UseIntrinsic    : 1; // Use intrinsic overflow checks.
+  unsigned HandlerProvidesValue    : 1; // Use values returned by trap handler
+                                  // as arithmetic operations' results.
+  unsigned ChecksNum    : 1; // Output the number of instrumented checks.
   unsigned DumpRecordLayouts : 1; /// Dump the layout of IRgen'd records.
   unsigned DumpVTableLayouts : 1; /// Dump the layouts of emitted vtables.
   unsigned NoConstantCFStrings : 1;  // Do not do CF strings
@@ -211,6 +225,14 @@ public:
     ShortWChar = 0;
     ShortEnums = 0;
     CatchUndefined = 0;
+    CatchUndefinedAnsiC = 0;
+    CatchUndefinedC99 = 0;
+    CatchUndefinedCXX0X = 0;
+    CatchUndefinedCXX98 = 0;
+    CatchNonArithUndefined = 0;
+    UseIntrinsic = 0;
+    HandlerProvidesValue = 0;
+    ChecksNum = 0;
     DumpRecordLayouts = 0;
     DumpVTableLayouts = 0;
     SpellChecking = 1;

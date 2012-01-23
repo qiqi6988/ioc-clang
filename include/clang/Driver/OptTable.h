@@ -142,6 +142,9 @@ namespace options {
       return getInfo(id).MetaVar;
     }
 
+    Arg *ParseOneArgTrap(const ArgList &Args, unsigned &Index,
+                         const char *Str) const;
+
     /// ParseOneArg - Parse a single argument; returning the new argument and
     /// updating Index.
     ///

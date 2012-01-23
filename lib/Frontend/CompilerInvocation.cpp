@@ -555,6 +555,22 @@ static void LangOptsToArgs(const LangOptions &Opts,
     Res.push_back("-fpascal-strings");
   if (Opts.CatchUndefined)
     Res.push_back("-fcatch-undefined-behavior");
+  if (Opts.CatchUndefinedAnsiC)
+    Res.push_back("-fcatch-undefined-ansic-behavior");
+  if (Opts.CatchUndefinedC99)
+    Res.push_back("-fcatch-undefined-c99-behavior");
+  if (Opts.CatchUndefinedCXX0X)
+    Res.push_back("-fcatch-undefined-cxx0x-behavior");
+  if (Opts.CatchUndefinedCXX98)
+    Res.push_back("-fcatch-undefined-cxx98-behavior");
+  if (Opts.CatchNonArithUndefined)
+    Res.push_back("-fcatch-undefined-nonarith-behavior");
+  if (Opts.UseIntrinsic)
+    Res.push_back("-fcatch-undefined-use-intrinsic");
+  if (Opts.HandlerProvidesValue)
+    Res.push_back("-fuse-random-value");
+  if (Opts.ChecksNum)
+    Res.push_back("-fchecks-num");
   if (Opts.WritableStrings)
     Res.push_back("-fwritable-strings");
   if (Opts.ConstStrings)
@@ -1454,6 +1470,15 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.ObjCDefaultSynthProperties =
     Args.hasArg(OPT_fobjc_default_synthesize_properties);
   Opts.CatchUndefined = Args.hasArg(OPT_fcatch_undefined_behavior);
+  Opts.CatchUndefinedAnsiC = Args.hasArg(OPT_fcatch_undefined_ansic_behavior);
+  Opts.CatchUndefinedC99 = Args.hasArg(OPT_fcatch_undefined_c99_behavior);
+  Opts.CatchUndefinedCXX0X = Args.hasArg(OPT_fcatch_undefined_cxx0x_behavior);
+  Opts.CatchUndefinedCXX98 = Args.hasArg(OPT_fcatch_undefined_cxx98_behavior);
+  Opts.CatchNonArithUndefined = Args.hasArg(
+                                      OPT_fcatch_undefined_nonarith_behavior);
+  Opts.UseIntrinsic = Args.hasArg(OPT_fcatch_undefined_use_intrinsic);
+  Opts.HandlerProvidesValue = Args.hasArg(OPT_fhandler_provides_value);
+  Opts.ChecksNum = Args.hasArg(OPT_fchecks_num);
   Opts.EmitAllDecls = Args.hasArg(OPT_femit_all_decls);
   Opts.PICLevel = Args.getLastArgIntValue(OPT_pic_level, 0, Diags);
   Opts.Static = Args.hasArg(OPT_static_define);

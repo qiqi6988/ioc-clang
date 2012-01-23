@@ -75,6 +75,7 @@ AttributeList::Kind AttributeList::getKind(const IdentifierInfo *Name) {
     .Case("iboutlet", AT_IBOutlet)
     .Case("iboutletcollection", AT_IBOutletCollection)
     .Case("noreturn", AT_noreturn)
+    .Case("nointegercheck", AT_nointegercheck)
     .Case("noinline", AT_noinline)
     .Case("sentinel", AT_sentinel)
     .Case("NSObject", AT_nsobject)

@@ -256,7 +256,30 @@ def fbuiltin_strcpy : Flag<"-fbuiltin-strcpy">, Group<f_Group>;
 def fbuiltin : Flag<"-fbuiltin">, Group<f_Group>;
 def fcaret_diagnostics : Flag<"-fcaret-diagnostics">, Group<f_Group>;
 def fcatch_undefined_behavior : Flag<"-fcatch-undefined-behavior">,
-    Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior.">;
+    Group<f_Group>, HelpText<"Generate runtime checks for undefined behaviors.">;
+def fcatch_undefined_ansic_behavior : Flag<"-fcatch-undefined-ansic-behavior">,
+    Group<f_Group>,
+    HelpText<"Generate runtime checks for undefined behaviors upon ansic standard.">;
+def fcatch_undefined_c99_behavior : Flag<"-fcatch-undefined-c99-behavior">,
+    Group<f_Group>,
+    HelpText<"Generate runtime checks for undefined behaviors upon c99 standard.">;
+def fcatch_undefined_cxx0x_behavior : Flag<"-fcatch-undefined-cxx0x-behavior">,
+    Group<f_Group>,
+    HelpText<"Generate runtime checks for undefined behaviors upon c++0x standard.">;
+def fcatch_undefined_cxx98_behavior : Flag<"-fcatch-undefined-cxx98-behavior">,
+    Group<f_Group>,
+    HelpText<"Generate runtime checks for undefined behaviors upon c++98 standard.">;
+def fcatch_undefined_nonarith_behavior : Flag<"-fcatch-undefined-nonarith-behavior">,
+    Group<f_Group>,
+    HelpText<"Generate runtime checks for undefined behaviors for non-arithmetic operations.">;
+def fcatch_undefined_use_intrinsic : Flag<"-fcatch-undefined-use-intrinsic">,
+    Group<f_Group>,
+    HelpText<"Use LLVM's intrinsic checks to detect overflow.">;
+def fhandler_provides_value : Flag<"-fhandler-provides-value">,
+    Group<f_Group>,
+    HelpText<"Use random values returned by trap handler as arithmetic operations' results.">;
+def fchecks_num : Flag<"-fchecks-num">,
+    Group<f_Group>, HelpText<"Output the number of instrumented number.">;
 def fclasspath_EQ : Joined<"-fclasspath=">, Group<f_Group>;
 def fcolor_diagnostics : Flag<"-fcolor-diagnostics">, Group<f_Group>;
 def fcommon : Flag<"-fcommon">, Group<f_Group>;

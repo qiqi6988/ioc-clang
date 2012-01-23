@@ -74,6 +74,80 @@ namespace CodeGen {
   class BlockFlags;
   class BlockFieldFlags;
 
+// The information contained in this class will be used by trap handler
+// in trap block.
+class ArithmeticTrapErrorInfo {
+private:
+  llvm::Value *LValue; // The left operand
+  llvm::Value *RValue; // The right operand
+  const Expr *Operator; // The binary or unary operator
+  llvm::BasicBlock *trapNextBB; // The basic block that trap block jumps to
+  std::string rule; // The rule violated
+  unsigned mark; // The mark type for undefined checking or non-undefined one
+public:
+
+  ArithmeticTrapErrorInfo() {
+    LValue = 0;
+    RValue  = 0;
+    Operator = 0;
+    trapNextBB = 0;
+    mark = 0;
+  }
+
+  ~ArithmeticTrapErrorInfo() {
+    LValue  = 0;
+    RValue  = 0;
+    Operator = 0;
+    trapNextBB = 0;
+    rule.clear();
+    mark = 0;
+  }
+
+  void setAll(llvm::Value *lvalue, llvm::Value *rvalue, const Expr *Op,
+	      llvm::BasicBlock *nextBB, std::string tmpRule, unsigned m) {
+    LValue = lvalue;
+    RValue = rvalue;
+    Operator = Op;
+    trapNextBB = nextBB;
+    rule = tmpRule;
+    mark = m;
+  }
+
+  void clearAll() {
+    LValue = 0;
+    RValue = 0;
+    Operator = 0;
+    trapNextBB = 0;
+    rule.clear();
+    mark = 0;
+  }
+
+  llvm::Value *getLValue() const {
+    return LValue;
+  }
+
+  llvm::Value *getRValue() const {
+    return RValue;
+  }
+
+  const Expr *getOp() const {
+    return Operator;
+  }
+
+  llvm::BasicBlock *getTrapNextBB() const {
+    return trapNextBB;
+  }
+
+  std::string getRule() const {
+    return rule;
+  }
+
+  unsigned getMark() const {
+    return mark;
+  }
+
+};
+
 /// A branch fixup.  These are required when emitting a goto to a
 /// label which hasn't been emitted yet.  The goto is optimistically
 /// emitted as a branch to the basic block for the label, and (if it
@@ -582,7 +656,29 @@ public:
   /// we prefer to insert allocas.
   llvm::AssertingVH<llvm::Instruction> AllocaInsertPt;
 
+  // The type used in trap block
+  const llvm::Type* rvOpTy;
+  llvm::Value* trapHandlerResult;
+
+  // intptr_t, i8, i32, i64
+  const llvm::IntegerType *IntPtrTy, *Int8Ty, *Int32Ty, *Int64Ty;
+  uint32_t LLVMPointerWidth;
+
+  bool Exceptions;
   bool CatchUndefined;
+  bool CatchUndefinedAnsiC;
+  bool CatchUndefinedC99;
+  bool CatchUndefinedCXX0X;
+  bool CatchUndefinedCXX98;
+  bool CatchNonArithUndefined;
+
+  // Whether to apply LLVM intrinsic backends for +, - and *
+  bool UseIntrinsic;
+  // Whether to use the random result returned by trap handler
+  // instead of operation's own result.
+  bool HandlerProvidesValue;
+  // Whether to output the number of instrumented checks
+  bool ChecksNum;
 
   const CodeGen::CGBlockInfo *BlockInfo;
   llvm::Value *BlockPointer;
@@ -1027,6 +1123,9 @@ private:
   llvm::BasicBlock *TrapBB;
 
 public:
+  ArithmeticTrapErrorInfo ATEI; // The arithmetic trap info object
+  // The detailed source code location of non-arithmetic operation
+  clang::SourceLocation NonArithSL;
   CodeGenFunction(CodeGenModule &cgm);
 
   CodeGenTypes &getTypes() const { return CGM.getTypes(); }
@@ -1131,6 +1230,7 @@ public:
   const llvm::Type *BuildByRefType(const VarDecl *var);
 
   void GenerateCode(GlobalDecl GD, llvm::Function *Fn);
+  void CXXThisIsNull();
   void StartFunction(GlobalDecl GD, QualType RetTy,
                      llvm::Function *Fn,
                      const FunctionArgList &Args,
@@ -2073,9 +2173,27 @@ public:
   void EmitBranchOnBoolExpr(const Expr *Cond, llvm::BasicBlock *TrueBlock,
                             llvm::BasicBlock *FalseBlock);
 
+  /// Whether to catch arithmetic operations..
+  bool catchArithUndefined() const;
+
+  /// Whether to catch non-arithmetic operations..
+  bool catchNonArithUndefined() const;
+
+  /// Invoke the concrete trap handler...
+  void invokeTrapHandlerFunction();
+
   /// getTrapBB - Create a basic block that will call the trap intrinsic.  We'll
   /// generate a branch around the created basic block as necessary.
   llvm::BasicBlock *getTrapBB();
+
+  /// CreateTrapBB - create the trap BB
+  void CreateTrapBB();
+
+  /// getSoleTrapBB - Just return the trap BB
+  llvm::BasicBlock *getSoleTrapBB();
+
+  /// EmitTrapBB - Just emit the relevant trap BB
+  void EmitTrapBB();
 
   /// EmitCallArg - Emit a single call argument.
   RValue EmitCallArg(const Expr *E, QualType ArgType);

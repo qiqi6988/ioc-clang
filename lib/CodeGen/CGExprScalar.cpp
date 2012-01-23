@@ -30,6 +30,7 @@
 #include "llvm/Support/CFG.h"
 #include "llvm/Target/TargetData.h"
 #include <cstdarg>
+#include "clang/Basic/SourceManager.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -245,9 +246,6 @@ public:
     return EmitLoadOfLValue(E);
   }
   Value *VisitObjCMessageExpr(ObjCMessageExpr *E) {
-    if (E->getMethodDecl() && 
-        E->getMethodDecl()->getResultType()->isReferenceType())
-      return EmitLoadOfLValue(E);
     return CGF.EmitObjCMessageExpr(E).getScalarVal();
   }
 
@@ -396,6 +394,12 @@ public:
     if (Ops.Ty->hasSignedIntegerRepresentation()) {
       switch (CGF.getContext().getLangOptions().getSignedOverflowBehavior()) {
       case LangOptions::SOB_Undefined:
+        if (CGF.catchArithUndefined()) {
+          if (CGF.UseIntrinsic)
+	    return UndefinedBehaviorOverflowCheck(Ops);
+          else
+            return UndefinedBehaviorMulCheck(Ops);
+        }
         return Builder.CreateNSWMul(Ops.LHS, Ops.RHS, "mul");
       case LangOptions::SOB_Defined:
         return Builder.CreateMul(Ops.LHS, Ops.RHS, "mul");
@@ -415,6 +419,15 @@ public:
   /// Create a binary op that checks for overflow.
   /// Currently only supports +, - and *.
   Value *EmitOverflowCheckedBinOp(const BinOpInfo &Ops);
+  Value *getNormalAdditionValue(const BinOpInfo &Ops, unsigned addMark);
+  Value *UndefinedBehaviorAddCheck(const BinOpInfo &Ops, unsigned addMark);
+  Value *UndefinedBehaviorSubCheck(const BinOpInfo &Ops);
+  Value *UndefinedBehaviorMulCheck(const BinOpInfo &Ops);
+  Value *UndefinedBehaviorOverflowCheck(const BinOpInfo &Ops);
+  void UndefinedBehaviorDivAndRemCheck(const BinOpInfo &Ops,
+                                       llvm::BasicBlock* normalBlock,
+                                       llvm::BasicBlock* finalBlock,
+                                       llvm::Value *Zero, bool isDiv);
   // Emit the overflow BB when -ftrapv option is activated. 
   void EmitOverflowBB(llvm::BasicBlock *overflowBB) {
     Builder.SetInsertPoint(overflowBB);
@@ -425,6 +438,7 @@ public:
   // Check for undefined division and modulus behaviors.
   void EmitUndefinedBehaviorIntegerDivAndRemCheck(const BinOpInfo &Ops, 
                                                   llvm::Value *Zero,bool isDiv);
+
   Value *EmitDiv(const BinOpInfo &Ops);
   Value *EmitRem(const BinOpInfo &Ops);
   Value *EmitAdd(const BinOpInfo &Ops);
@@ -1237,7 +1251,23 @@ EmitAddConsiderOverflowBehavior(const UnaryOperator *E,
                                 llvm::Value *NextVal, bool IsInc) {
   switch (CGF.getContext().getLangOptions().getSignedOverflowBehavior()) {
   case LangOptions::SOB_Undefined:
-    return Builder.CreateNSWAdd(InVal, NextVal, IsInc ? "inc" : "dec");
+    if (CGF.catchArithUndefined()) {
+      BinOpInfo BinOp;
+      BinOp.LHS = InVal;
+      BinOp.RHS = NextVal;
+      BinOp.Ty = E->getType();
+      BinOp.Opcode = BO_Add;
+      BinOp.E = E;
+      if (CGF.UseIntrinsic) {
+        llvm::outs() << "Execute here!\n";
+        return UndefinedBehaviorOverflowCheck(BinOp);
+      }
+      else
+        return UndefinedBehaviorAddCheck(BinOp, IsInc ? 1 : 2);
+    }
+    else {
+      return Builder.CreateNSWAdd(InVal, NextVal, IsInc ? "inc" : "dec");
+    }
     break;
   case LangOptions::SOB_Defined:
     return Builder.CreateAdd(InVal, NextVal, IsInc ? "inc" : "dec");
@@ -1699,20 +1729,113 @@ void ScalarExprEmitter::EmitUndefinedBehaviorIntegerDivAndRemCheck(
   Builder.SetInsertPoint(contBB);
 }
 
-Value *ScalarExprEmitter::EmitDiv(const BinOpInfo &Ops) {
-  if (isTrapvOverflowBehavior()) { 
-    llvm::Value *Zero = llvm::Constant::getNullValue(ConvertType(Ops.Ty));
+void ScalarExprEmitter::UndefinedBehaviorDivAndRemCheck(
+                                         const BinOpInfo &Ops,
+                                         llvm::BasicBlock* normalBlock,
+                                         llvm::BasicBlock* finalBlock,
+                                         llvm::Value *Zero, bool isDiv) {
+  std::string tmpRule;
+  CGF.CreateTrapBB();
+  if (Ops.Ty->hasSignedIntegerRepresentation()) {
+    const llvm::IntegerType *Ty = cast<llvm::IntegerType>(Zero->getType());
+    llvm::Value *IntMin =
+      llvm::ConstantInt::get(VMContext,
+                             llvm::APInt::getSignedMinValue(Ty->getBitWidth()));
+    llvm::Value *NegOne = llvm::ConstantInt::get(Ty, -1ULL);
 
-    if (Ops.Ty->isIntegerType())
-      EmitUndefinedBehaviorIntegerDivAndRemCheck(Ops, Zero, true);
+    if (isDiv) {
+      tmpRule = "Signed Division: Divisor is 0 ";
+      tmpRule += "|| dividend is INT_MIN, divisor is -1";
+    }
+    else {
+      tmpRule = "Signed Modulus: The second operand is 0 ";
+      tmpRule += "|| The first operand: INT_MIN, the second operand: -1";
+    }
+    CGF.ATEI.setAll(Ops.LHS, Ops.RHS, Ops.E, finalBlock, tmpRule, 0);
+    llvm::Value *Cond1 = Builder.CreateICmpEQ(Ops.RHS, Zero);
+    llvm::Value *LHSCmp = Builder.CreateICmpEQ(Ops.LHS, IntMin);
+    llvm::Value *RHSCmp = Builder.CreateICmpEQ(Ops.RHS, NegOne);
+    llvm::Value *Cond2 = Builder.CreateAnd(LHSCmp, RHSCmp, "and");
+    CGF.Builder.CreateCondBr(Builder.CreateOr(Cond1, Cond2, "or"),
+		             CGF.getSoleTrapBB(),
+                             CGF.HandlerProvidesValue? normalBlock : finalBlock);
+  }
+  else {
+    if (isDiv)
+      tmpRule = "Unsigned Division: Divisor is 0";
+    else
+      tmpRule = "Unsigned Modulus: The second operand is 0";
+    CGF.ATEI.setAll(Ops.LHS, Ops.RHS, Ops.E, finalBlock, tmpRule, 0);
+    CGF.Builder.CreateCondBr(Builder.CreateICmpEQ(Ops.RHS, Zero),
+			     CGF.getSoleTrapBB(),
+			     CGF.HandlerProvidesValue? normalBlock : finalBlock);
+  }
+  CGF.EmitTrapBB();
+}
+
+Value *ScalarExprEmitter::EmitDiv(const BinOpInfo &Ops) {
+  if (CGF.catchArithUndefined() || isTrapvOverflowBehavior()) {
+    std::string tmpRule;
+    bool AddedCheck = false;
+    CGF.rvOpTy = ConvertType(Ops.Ty);
+    llvm::Value *Zero = llvm::Constant::getNullValue(CGF.rvOpTy);
+    llvm::BasicBlock *DivNormalEnd = CGF.createBasicBlock("div.norm");
+    llvm::BasicBlock *DivFinalEnd = CGF.createBasicBlock("div.final");
+
+    if (Ops.Ty->isIntegerType()) {
+      if (isTrapvOverflowBehavior())
+        EmitUndefinedBehaviorIntegerDivAndRemCheck(Ops, Zero, true);
+      else if (CGF.catchArithUndefined()) {
+        UndefinedBehaviorDivAndRemCheck(Ops, DivNormalEnd,
+				        DivFinalEnd, Zero, true);
+        AddedCheck = true;
+      }
+    }
     else if (Ops.Ty->isRealFloatingType()) {
-      llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow",
-                                                          CGF.CurFn);
-      llvm::BasicBlock *DivCont = CGF.createBasicBlock("div.cont", CGF.CurFn);
-      CGF.Builder.CreateCondBr(Builder.CreateFCmpOEQ(Ops.RHS, Zero), 
-                               overflowBB, DivCont);
-      EmitOverflowBB(overflowBB);
-      Builder.SetInsertPoint(DivCont);
+      if (isTrapvOverflowBehavior()) {
+        llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow",
+                                                            CGF.CurFn);
+        llvm::BasicBlock *DivCont = CGF.createBasicBlock("div.cont", CGF.CurFn);
+        CGF.Builder.CreateCondBr(Builder.CreateFCmpOEQ(Ops.RHS, Zero),
+                                 overflowBB, DivCont);
+        EmitOverflowBB(overflowBB);
+        Builder.SetInsertPoint(DivCont);
+      }
+      else if (CGF.catchArithUndefined()) {
+        CGF.CreateTrapBB();
+        tmpRule = "Floating Division: Divisor is 0";
+        CGF.ATEI.setAll(Ops.LHS, Ops.RHS, Ops.E, DivFinalEnd, tmpRule, 0);
+        CGF.Builder.CreateCondBr(Builder.CreateFCmpOEQ(Ops.RHS, Zero),
+		                 CGF.getSoleTrapBB(),
+			         CGF.HandlerProvidesValue? DivNormalEnd : DivFinalEnd);
+        CGF.EmitTrapBB();
+        AddedCheck = true;
+      }
+    }
+
+    if (CGF.catchArithUndefined() && AddedCheck) {
+      llvm::Value *result = 0;
+
+      if (CGF.HandlerProvidesValue) {
+        CGF.EmitBlock(DivNormalEnd);
+        if (Ops.LHS->getType()->isFPOrFPVectorTy())
+          result = Builder.CreateFDiv(Ops.LHS, Ops.RHS, "div");
+        else if (Ops.Ty->hasUnsignedIntegerRepresentation())
+          result = Builder.CreateUDiv(Ops.LHS, Ops.RHS, "div");
+        else
+          result = Builder.CreateSDiv(Ops.LHS, Ops.RHS, "div");
+        CGF.EmitBranch(DivFinalEnd);
+      }
+
+      CGF.EmitBlock(DivFinalEnd);
+
+      if (CGF.HandlerProvidesValue) {
+        llvm::PHINode *phi = Builder.CreatePHI(CGF.rvOpTy);
+        phi->reserveOperandSpace(2);
+        phi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+        phi->addIncoming(result, DivNormalEnd);
+        return phi;
+      }
     }
   }
   if (Ops.LHS->getType()->isFPOrFPVectorTy())
@@ -1725,11 +1848,44 @@ Value *ScalarExprEmitter::EmitDiv(const BinOpInfo &Ops) {
 
 Value *ScalarExprEmitter::EmitRem(const BinOpInfo &Ops) {
   // Rem in C can't be a floating point type: C99 6.5.5p2.
-  if (isTrapvOverflowBehavior()) {
-    llvm::Value *Zero = llvm::Constant::getNullValue(ConvertType(Ops.Ty));
+  if (CGF.catchArithUndefined() || isTrapvOverflowBehavior()) {
+    bool AddedCheck = false;
+    CGF.rvOpTy = ConvertType(Ops.Ty);
+    llvm::Value *Zero = llvm::Constant::getNullValue(CGF.rvOpTy);
+    llvm::BasicBlock *RemNormalEnd = CGF.createBasicBlock("rem.norm.end");
+    llvm::BasicBlock *RemFinalEnd = CGF.createBasicBlock("rem.final.end");
 
-    if (Ops.Ty->isIntegerType()) 
-      EmitUndefinedBehaviorIntegerDivAndRemCheck(Ops, Zero, false);
+    if (Ops.Ty->isIntegerType()){
+      if (isTrapvOverflowBehavior())
+        EmitUndefinedBehaviorIntegerDivAndRemCheck(Ops, Zero, false);
+      else if (CGF.catchArithUndefined()) {
+        UndefinedBehaviorDivAndRemCheck(Ops, RemNormalEnd,
+                                        RemFinalEnd, Zero, true);
+        AddedCheck = true;
+      }
+    }
+
+    if (CGF.catchArithUndefined() && AddedCheck) {
+      llvm::Value *result = 0;
+      if (CGF.HandlerProvidesValue) {
+        CGF.EmitBlock(RemNormalEnd);
+        if (Ops.Ty->isUnsignedIntegerType())
+          result = Builder.CreateURem(Ops.LHS, Ops.RHS, "rem");
+        else
+          result = Builder.CreateSRem(Ops.LHS, Ops.RHS, "rem");
+        CGF.EmitBranch(RemFinalEnd);
+      }
+
+      CGF.EmitBlock(RemFinalEnd);
+
+      if (CGF.HandlerProvidesValue) {
+        llvm::PHINode *phi = Builder.CreatePHI(CGF.rvOpTy);
+        phi->reserveOperandSpace(2);
+        phi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+        phi->addIncoming(result, RemNormalEnd);
+        return phi;
+      }
+    }
   }
 
   if (Ops.Ty->isUnsignedIntegerType())
@@ -1826,11 +1982,337 @@ Value *ScalarExprEmitter::EmitOverflowCheckedBinOp(const BinOpInfo &Ops) {
   return phi;
 }
 
+Value *ScalarExprEmitter::UndefinedBehaviorOverflowCheck(const BinOpInfo &Ops) {
+  unsigned IID;
+  unsigned OpID = 0;
+  std::string tmpRule;
+
+  switch (Ops.Opcode) {
+  case BO_Add:
+  case BO_AddAssign:
+    OpID = 1;
+    tmpRule = "Signed Addition Overflow";
+    IID = llvm::Intrinsic::sadd_with_overflow;
+    break;
+  case BO_Sub:
+  case BO_SubAssign:
+    OpID = 2;
+    tmpRule = "Signed Subtraction Overflow";
+    IID = llvm::Intrinsic::ssub_with_overflow;
+    break;
+  case BO_Mul:
+  case BO_MulAssign:
+    OpID = 3;
+    tmpRule = "Signed Multiplication Overflow";
+    IID = llvm::Intrinsic::smul_with_overflow;
+    break;
+  default:
+    assert(false && "Unsupported operation for overflow detection");
+    IID = 0;
+  }
+  OpID <<= 1;
+  OpID |= 1;
+
+  const llvm::Type *opTy = CGF.CGM.getTypes().ConvertType(Ops.Ty);
+  CGF.rvOpTy = opTy;
+  llvm::Function *intrinsic = CGF.CGM.getIntrinsic(IID, &opTy, 1);
+
+  llvm::Value *resultAndOverflow = Builder.CreateCall2(intrinsic, Ops.LHS, Ops.RHS);
+  llvm::Value *result = 0;
+  llvm::Value *overflow = Builder.CreateExtractValue(resultAndOverflow, 1);
+  llvm::BasicBlock *contNormalBB = CGF.createBasicBlock("overflow.norm.cont");
+  llvm::BasicBlock *contFinalBB = CGF.createBasicBlock("overflow.final.cont");
+
+  CGF.CreateTrapBB();
+  CGF.ATEI.setAll(Ops.LHS, Ops.RHS, Ops.E, contFinalBB, tmpRule, 0);
+  CGF.Builder.CreateCondBr(overflow, CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? contNormalBB : contFinalBB);
+  CGF.EmitTrapBB();
+
+  if (CGF.HandlerProvidesValue) {
+    CGF.EmitBlock(contNormalBB);
+    result = Builder.CreateExtractValue(resultAndOverflow, 0);
+    CGF.EmitBranch(contFinalBB);
+  }
+
+  CGF.EmitBlock(contFinalBB);
+
+  if (CGF.HandlerProvidesValue) {
+    llvm::PHINode *phi = Builder.CreatePHI(opTy);
+    phi->reserveOperandSpace(2);
+    phi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+    phi->addIncoming(result, contNormalBB);
+    return phi;
+  }
+  return Builder.CreateExtractValue(resultAndOverflow, 0);
+}
+
+Value *ScalarExprEmitter::getNormalAdditionValue(const BinOpInfo &Ops,
+						 unsigned addMark) {
+  llvm::Value *value = 0;
+  switch(addMark) {
+    case 0:
+      value = Builder.CreateNSWAdd(Ops.LHS, Ops.RHS, "add");
+      break;
+    case 1:
+      value = Builder.CreateNSWAdd(Ops.LHS, Ops.RHS, "inc");
+      break;
+    case 2:
+      value = Builder.CreateNSWAdd(Ops.LHS, Ops.RHS, "dec");
+      break;
+  }
+  return value;
+}
+
+// (((si1>0) && (si2>0) && (si1 > (INT_MAX-si2)))
+// || ((si1<0) && (si2<0) && (si1 < (INT_MIN-si2))))
+Value *ScalarExprEmitter::UndefinedBehaviorAddCheck(const BinOpInfo &Ops,
+					            unsigned addMark) {
+  CGF.rvOpTy = ConvertType(Ops.Ty);
+  if (CGF.rvOpTy->isVectorTy()) {
+    return getNormalAdditionValue(Ops, addMark);
+  }
+  const llvm::IntegerType *Ty = cast<llvm::IntegerType>(CGF.rvOpTy);
+  llvm::Value *IntMax = llvm::ConstantInt::get(VMContext,
+                        llvm::APInt::getSignedMaxValue(Ty->getBitWidth()));
+  llvm::Value *IntMin = llvm::ConstantInt::get(VMContext,
+                        llvm::APInt::getSignedMinValue(Ty->getBitWidth()));
+
+  std::string tmpRule;
+  llvm::Value *Zero = llvm::Constant::getNullValue(CGF.rvOpTy);
+
+  llvm::BasicBlock *TrueBB1 = CGF.createBasicBlock("add.true");
+  llvm::BasicBlock *FalseBB1 = CGF.createBasicBlock("add.false");
+  llvm::BasicBlock *AddNormalEnd = CGF.createBasicBlock("add.norm.end");
+  llvm::BasicBlock *AddFinalEnd = CGF.createBasicBlock("add.final.end");
+
+  CGF.Builder.CreateCondBr(Builder.CreateAnd(
+                             Builder.CreateICmpSGT(Ops.LHS, Zero),
+                               Builder.CreateICmpSGT(Ops.RHS, Zero), "and"),
+                           TrueBB1, FalseBB1);
+  CGF.EmitBlock(TrueBB1);
+
+  CGF.CreateTrapBB();
+  tmpRule = "Signed Addition Overflow";
+  CGF.ATEI.setAll(Ops.LHS, Ops.RHS, Ops.E, AddFinalEnd, tmpRule, 0);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSGT(Ops.LHS,
+                             Builder.CreateNSWSub(IntMax, Ops.RHS, "sub")),
+                           CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? AddNormalEnd : AddFinalEnd);
+  CGF.EmitTrapBB();
+
+  CGF.EmitBlock(FalseBB1);
+  llvm::BasicBlock *TrueBB2 = CGF.createBasicBlock("add.true");
+  CGF.Builder.CreateCondBr(Builder.CreateAnd(
+                             Builder.CreateICmpSLT(Ops.LHS, Zero),
+                               Builder.CreateICmpSLT(Ops.RHS, Zero), "and"),
+                           TrueBB2,
+                           CGF.HandlerProvidesValue? AddNormalEnd : AddFinalEnd);
+
+  CGF.EmitBlock(TrueBB2);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSLT(Ops.LHS,
+                             Builder.CreateNSWSub(IntMin, Ops.RHS, "sub")),
+                           CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? AddNormalEnd : AddFinalEnd);
+
+  llvm::Value * result = 0;
+  if (CGF.HandlerProvidesValue) {
+    CGF.EmitBlock(AddNormalEnd);
+    result = getNormalAdditionValue(Ops, addMark);
+    CGF.EmitBranch(AddFinalEnd);
+  }
+
+  CGF.EmitBlock(AddFinalEnd);
+
+  if (CGF.HandlerProvidesValue) {
+    llvm::PHINode *phi = Builder.CreatePHI(CGF.rvOpTy);
+    phi->reserveOperandSpace(2);
+    phi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+    phi->addIncoming(result, AddNormalEnd);
+    return phi;
+  }
+  return getNormalAdditionValue(Ops, addMark);
+}
+
+// si2 < 0 ? si1 > INT_MAX + si2 : si1 < INT_MIN + si2
+Value *ScalarExprEmitter::UndefinedBehaviorSubCheck(const BinOpInfo &Ops) {
+  CGF.rvOpTy = ConvertType(Ops.Ty);
+  if (CGF.rvOpTy->isVectorTy()) {
+    return Builder.CreateNSWSub(Ops.LHS, Ops.RHS, "sub");
+  }
+  const llvm::IntegerType *Ty = cast<llvm::IntegerType>(CGF.rvOpTy);
+  llvm::Value *IntMax = llvm::ConstantInt::get(VMContext,
+                        llvm::APInt::getSignedMaxValue(Ty->getBitWidth()));
+  llvm::Value *IntMin = llvm::ConstantInt::get(VMContext,
+                        llvm::APInt::getSignedMinValue(Ty->getBitWidth()));
+
+  std::string tmpRule;
+  llvm::Value *Zero = llvm::Constant::getNullValue(CGF.rvOpTy);
+
+  llvm::BasicBlock *TrueBB1 = CGF.createBasicBlock("sub.true");
+  llvm::BasicBlock *FalseBB1 = CGF.createBasicBlock("sub.false");
+  llvm::BasicBlock *SubNormalEnd = CGF.createBasicBlock("sub.norm.end");
+  llvm::BasicBlock *SubFinalEnd = CGF.createBasicBlock("sub.final.end");
+
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSLT(Ops.RHS, Zero),
+                           TrueBB1, FalseBB1);
+  CGF.EmitBlock(TrueBB1);
+
+  CGF.CreateTrapBB();
+  tmpRule = "Signed Subtraction Overflow";
+  CGF.ATEI.setAll(Ops.LHS, Ops.RHS, Ops.E, SubFinalEnd, tmpRule, 0);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSGT(Ops.LHS,
+                             Builder.CreateNSWAdd(IntMax, Ops.RHS, "add")),
+                           CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? SubNormalEnd : SubFinalEnd);
+  CGF.EmitTrapBB();
+
+  CGF.EmitBlock(FalseBB1);
+  llvm::BasicBlock *TrueBB2 = CGF.createBasicBlock("sub.true");
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSGT(Ops.RHS, Zero),
+                           TrueBB2,
+                           CGF.HandlerProvidesValue? SubNormalEnd : SubFinalEnd);
+
+  CGF.EmitBlock(TrueBB2);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSLT(Ops.LHS,
+                             Builder.CreateNSWAdd(IntMin, Ops.RHS, "add")),
+                           CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? SubNormalEnd : SubFinalEnd);
+
+  llvm::Value *result = 0;
+  if (CGF.HandlerProvidesValue) {
+    CGF.EmitBlock(SubNormalEnd);
+    result = Builder.CreateNSWSub(Ops.LHS, Ops.RHS, "sub");
+    CGF.EmitBranch(SubFinalEnd);
+  }
+
+  CGF.EmitBlock(SubFinalEnd);
+
+  if (CGF.HandlerProvidesValue) {
+    llvm::PHINode *phi = Builder.CreatePHI(CGF.rvOpTy);
+    phi->reserveOperandSpace(2);
+    phi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+    phi->addIncoming(result, SubNormalEnd);
+    return phi;
+  }
+  return Builder.CreateNSWSub(Ops.LHS, Ops.RHS, "sub");
+}
+
+// (((si1 > 0) && (si2 > 0) && (si1 > (INT_MAX / si2)))
+// || ((si1 > 0) && (si2 <= 0) && (si2 < (INT_MIN / si1)))
+// || ((si1 <= 0) && (si2 > 0) && (si1 < (INT_MIN / si2)))
+// || ((si1 <= 0) && (si2 <= 0) && (si1 != 0) && (si2 < (INT_MAX / si1))))
+Value *ScalarExprEmitter::UndefinedBehaviorMulCheck(const BinOpInfo &Ops) {
+  CGF.rvOpTy = ConvertType(Ops.Ty);
+  if (CGF.rvOpTy->isVectorTy()) {
+    return Builder.CreateNSWMul(Ops.LHS, Ops.RHS, "mul");
+  }
+  const llvm::IntegerType *Ty = cast<llvm::IntegerType>(CGF.rvOpTy);
+  llvm::Value *IntMax = llvm::ConstantInt::get(VMContext,
+                        llvm::APInt::getSignedMaxValue(Ty->getBitWidth()));
+  llvm::Value *IntMin = llvm::ConstantInt::get(VMContext,
+                        llvm::APInt::getSignedMinValue(Ty->getBitWidth()));
+
+  std::string tmpRule;
+  llvm::Value *Zero = llvm::Constant::getNullValue(CGF.rvOpTy);
+
+  // Cond1: (si1 > 0) && (si2 > 0) && (si1 > (INT_MAX / si2))
+  llvm::BasicBlock *TrueBB1 = CGF.createBasicBlock("mul.true");
+  llvm::BasicBlock *FalseBB1 = CGF.createBasicBlock("mul.false");
+  llvm::BasicBlock *MulNormalEnd = CGF.createBasicBlock("mul.norm.end");
+  llvm::BasicBlock *MulFinalEnd = CGF.createBasicBlock("mul.final.end");
+
+  CGF.Builder.CreateCondBr(Builder.CreateAnd(
+                             Builder.CreateICmpSGT(Ops.LHS, Zero),
+                               Builder.CreateICmpSGT(Ops.RHS, Zero), "and"),
+                           TrueBB1, FalseBB1);
+  CGF.EmitBlock(TrueBB1);
+  CGF.CreateTrapBB();
+  tmpRule = "Signed Multiplication Overflow";
+  CGF.ATEI.setAll(Ops.LHS, Ops.RHS, Ops.E, MulFinalEnd, tmpRule, 0);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSGT(Ops.LHS,
+                             Builder.CreateSDiv(IntMax, Ops.RHS, "div")),
+                           CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? MulNormalEnd : MulFinalEnd);
+  CGF.EmitTrapBB();
+
+  CGF.EmitBlock(FalseBB1);
+  // Cond2: (si1 > 0) && (si2 < 0) && (si2 < (INT_MIN / si1))
+  llvm::BasicBlock *TrueBB2 = CGF.createBasicBlock("mul.true");
+  llvm::BasicBlock *FalseBB2 = CGF.createBasicBlock("mul.false");
+
+  CGF.Builder.CreateCondBr(Builder.CreateAnd(
+                             Builder.CreateICmpSGT(Ops.LHS, Zero),
+                               Builder.CreateICmpSLT(Ops.RHS, Zero), "and"),
+                           TrueBB2, FalseBB2);
+
+  CGF.EmitBlock(TrueBB2);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSLT(Ops.RHS,
+                             Builder.CreateSDiv(IntMin, Ops.LHS, "div")),
+                           CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? MulNormalEnd : MulFinalEnd);
+
+  CGF.EmitBlock(FalseBB2);
+  // Cond3: (si1 < 0) && (si2 > 0) && (si1 < (INT_MIN / si2))
+  llvm::BasicBlock *TrueBB3 = CGF.createBasicBlock("mul.true");
+  llvm::BasicBlock *FalseBB3 = CGF.createBasicBlock("mul.false");
+
+  CGF.Builder.CreateCondBr(Builder.CreateAnd(
+                             Builder.CreateICmpSLT(Ops.LHS, Zero),
+                               Builder.CreateICmpSGT(Ops.RHS, Zero), "and"),
+			   TrueBB3, FalseBB3);
+
+  CGF.EmitBlock(TrueBB3);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSLT(Ops.LHS,
+                             Builder.CreateSDiv(IntMin, Ops.RHS, "div")),
+			     CGF.getSoleTrapBB(),
+			     CGF.HandlerProvidesValue? MulNormalEnd : MulFinalEnd);
+
+  CGF.EmitBlock(FalseBB3);
+  // Cond4: (si1 < 0) && (si2 < 0) && (si2 < (INT_MAX / si1))
+  llvm::BasicBlock *TrueBB4 = CGF.createBasicBlock("mul.true");
+
+  CGF.Builder.CreateCondBr(Builder.CreateAnd(
+                             Builder.CreateICmpSLT(Ops.LHS, Zero),
+                               Builder.CreateICmpSLT(Ops.RHS, Zero), "and"),
+                           TrueBB4,
+                           CGF.HandlerProvidesValue? MulNormalEnd : MulFinalEnd);
+
+  CGF.EmitBlock(TrueBB4);
+  CGF.Builder.CreateCondBr(Builder.CreateICmpSLT(Ops.RHS,
+                             Builder.CreateSDiv(IntMax, Ops.LHS, "div")),
+                           CGF.getSoleTrapBB(),
+                           CGF.HandlerProvidesValue? MulNormalEnd : MulFinalEnd);
+
+  llvm::Value *result = 0;
+  if (CGF.HandlerProvidesValue) {
+    CGF.EmitBlock(MulNormalEnd);
+    result = Builder.CreateNSWMul(Ops.LHS, Ops.RHS, "mul");
+    CGF.EmitBranch(MulFinalEnd);
+  }
+  CGF.EmitBlock(MulFinalEnd);
+
+  if (CGF.HandlerProvidesValue) {
+    llvm::PHINode *phi = Builder.CreatePHI(CGF.rvOpTy);
+    phi->reserveOperandSpace(2);
+    phi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+    phi->addIncoming(result, MulNormalEnd);
+    return phi;
+  }
+  return Builder.CreateNSWMul(Ops.LHS, Ops.RHS, "mul");
+}
+
 Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &Ops) {
   if (!Ops.Ty->isAnyPointerType()) {
     if (Ops.Ty->hasSignedIntegerRepresentation()) {
       switch (CGF.getContext().getLangOptions().getSignedOverflowBehavior()) {
       case LangOptions::SOB_Undefined:
+        if (CGF.catchArithUndefined()) {
+          if (CGF.UseIntrinsic)
+            return UndefinedBehaviorOverflowCheck(Ops);
+          else
+            return UndefinedBehaviorAddCheck(Ops, 0);
+        }
         return Builder.CreateNSWAdd(Ops.LHS, Ops.RHS, "add");
       case LangOptions::SOB_Defined:
         return Builder.CreateAdd(Ops.LHS, Ops.RHS, "add");
@@ -1916,6 +2398,12 @@ Value *ScalarExprEmitter::EmitSub(const BinOpInfo &Ops) {
     if (Ops.Ty->hasSignedIntegerRepresentation()) {
       switch (CGF.getContext().getLangOptions().getSignedOverflowBehavior()) {
       case LangOptions::SOB_Undefined:
+        if (CGF.catchArithUndefined()) {
+          if (CGF.UseIntrinsic)
+	    return UndefinedBehaviorOverflowCheck(Ops);
+          else
+            return UndefinedBehaviorSubCheck(Ops);
+        }
         return Builder.CreateNSWSub(Ops.LHS, Ops.RHS, "sub");
       case LangOptions::SOB_Defined:
         return Builder.CreateSub(Ops.LHS, Ops.RHS, "sub");
@@ -2025,14 +2513,95 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
   if (Ops.LHS->getType() != RHS->getType())
     RHS = Builder.CreateIntCast(RHS, Ops.LHS->getType(), false, "sh_prom");
 
-  if (CGF.CatchUndefined 
+  if (CGF.catchArithUndefined()
       && isa<llvm::IntegerType>(Ops.LHS->getType())) {
+    std::string tmpRule;
     unsigned Width = cast<llvm::IntegerType>(Ops.LHS->getType())->getBitWidth();
-    llvm::BasicBlock *Cont = CGF.createBasicBlock("cont");
+    bool Continue = Ops.Ty->isSignedIntegerType()
+                      && (CGF.CatchUndefinedC99 || CGF.CatchUndefinedCXX0X
+                         || CGF.CatchUndefined);
+    llvm::Value *tmpTrapResult = 0;
+    llvm::BasicBlock *tmpTrapBB = 0;
+    llvm::BasicBlock *ShlCont1 = CGF.createBasicBlock("shl.cont");
+    llvm::BasicBlock *ShlNonNormalEnd =
+                                CGF.createBasicBlock("shl.non.norm.end");
+    llvm::BasicBlock *ShlNormalEnd = CGF.createBasicBlock("shl.norm.end");
+    llvm::BasicBlock *ShlFinalEnd = CGF.createBasicBlock("shl.final.end");
+    CGF.rvOpTy = ConvertType(Ops.Ty);
+
+    CGF.CreateTrapBB();
+    // The type of left shift result is that of the promoted left operand...
+    if (Ops.Ty->isSignedIntegerType()) {
+      tmpRule = "Signed Left Shift: Right operand is negative or is greater";
+      tmpRule += " than or equal to the width of the promoted left operand";
+    }
+    else {
+      tmpRule = "Unsigned Left Shift: Right operand is negative or is greater";
+      tmpRule += " than or equal to the width of the promoted left operand";
+    }
+    if (CGF.HandlerProvidesValue)
+      CGF.ATEI.setAll(Ops.LHS, RHS, Ops.E,
+                      Continue? ShlNonNormalEnd : ShlFinalEnd, tmpRule, 0);
+    else
+      CGF.ATEI.setAll(Ops.LHS, RHS, Ops.E, ShlCont1, tmpRule, 0);
     CGF.Builder.CreateCondBr(Builder.CreateICmpULT(RHS,
                                  llvm::ConstantInt::get(RHS->getType(), Width)),
-                             Cont, CGF.getTrapBB());
-    CGF.EmitBlock(Cont);
+                             ShlCont1, CGF.getSoleTrapBB());
+    CGF.EmitTrapBB();
+    tmpTrapResult = CGF.trapHandlerResult;
+    tmpTrapBB = CGF.getSoleTrapBB();
+    CGF.EmitBlock(ShlCont1);
+
+    if (Continue) {
+      const llvm::IntegerType *Ty = cast<llvm::IntegerType>(CGF.rvOpTy);
+      llvm::Value *IntMax = llvm::ConstantInt::get(VMContext,
+                            llvm::APInt::getSignedMaxValue(Ty->getBitWidth()));
+
+      // Here, we can directly execute the instruction "Int_Max >> right"
+      // without checking whether right operand is greater than the
+      // width of left operand type due to previous checks.
+      llvm::Value *ResValue = Builder.CreateAShr(IntMax, RHS, "shr");
+      llvm::BasicBlock *ShlCont2 = CGF.createBasicBlock("shl.cont");
+      CGF.CreateTrapBB();
+      tmpRule = "Signed Left Shift: left operand is negative || ";
+      tmpRule += "left operand is nonnegative, ";
+      tmpRule += "but the result can not be represented in the result ";
+      tmpRule += "signed type";
+      CGF.ATEI.setAll(Ops.LHS, RHS, Ops.E,
+                      CGF.HandlerProvidesValue? ShlNonNormalEnd : ShlCont2, tmpRule, 0);
+      CGF.Builder.CreateCondBr(Builder.CreateICmpUGT(Ops.LHS, ResValue),
+                               CGF.getSoleTrapBB(), ShlCont2);
+      CGF.EmitTrapBB();
+      CGF.EmitBlock(ShlCont2);
+    }
+
+    if (CGF.HandlerProvidesValue) {
+      CGF.EmitBlock(ShlNormalEnd);
+      llvm::Value *result = Builder.CreateShl(Ops.LHS, RHS, "shl");
+      llvm::PHINode *tmpphi = 0;
+      llvm::PHINode *finalPHI = 0;
+      CGF.EmitBranch(ShlFinalEnd);
+
+      if (Continue) {
+        CGF.EmitBlock(ShlNonNormalEnd);
+        tmpphi = Builder.CreatePHI(CGF.rvOpTy);
+        tmpphi->reserveOperandSpace(2);
+        tmpphi->addIncoming(tmpTrapResult, tmpTrapBB);
+        tmpphi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+        CGF.EmitBranch(ShlFinalEnd);
+      }
+
+      CGF.EmitBlock(ShlFinalEnd);
+
+      finalPHI = Builder.CreatePHI(CGF.rvOpTy);
+      finalPHI->reserveOperandSpace(2);
+      if (Continue)
+        finalPHI->addIncoming(tmpphi, ShlNonNormalEnd);
+      else
+        finalPHI->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+      finalPHI->addIncoming(result, ShlNormalEnd);
+      return finalPHI;
+    }
   }
 
   return Builder.CreateShl(Ops.LHS, RHS, "shl");
@@ -2045,14 +2614,50 @@ Value *ScalarExprEmitter::EmitShr(const BinOpInfo &Ops) {
   if (Ops.LHS->getType() != RHS->getType())
     RHS = Builder.CreateIntCast(RHS, Ops.LHS->getType(), false, "sh_prom");
 
-  if (CGF.CatchUndefined 
+  if (CGF.catchArithUndefined()
       && isa<llvm::IntegerType>(Ops.LHS->getType())) {
+    std::string tmpRule;
     unsigned Width = cast<llvm::IntegerType>(Ops.LHS->getType())->getBitWidth();
-    llvm::BasicBlock *Cont = CGF.createBasicBlock("cont");
+    CGF.rvOpTy = ConvertType(Ops.Ty);
+    llvm::BasicBlock *ShrNormalEnd = CGF.createBasicBlock("shr.norm.cont");
+    llvm::BasicBlock *ShrFinalEnd = CGF.createBasicBlock("shr.final.cont");
+
+    CGF.CreateTrapBB();
+    // Since the type of the result is that of the promoted left operand...
+    if (Ops.Ty->isSignedIntegerType()) {
+      tmpRule = "Signed Right Shift: Right operand is negative or is greater";
+      tmpRule += " than or equal to the width of the promoted left operand";
+    }
+    else {
+      tmpRule = "Unsigned Right Shift: Right operand is negative or is greater";
+      tmpRule += " than or equal to the width of the promoted left operand";
+    }
+    CGF.ATEI.setAll(Ops.LHS, RHS, Ops.E, ShrFinalEnd, tmpRule, 0);
     CGF.Builder.CreateCondBr(Builder.CreateICmpULT(RHS,
-                                 llvm::ConstantInt::get(RHS->getType(), Width)),
-                             Cont, CGF.getTrapBB());
-    CGF.EmitBlock(Cont);
+                               llvm::ConstantInt::get(RHS->getType(), Width)),
+                             CGF.HandlerProvidesValue? ShrNormalEnd : ShrFinalEnd,
+                             CGF.getSoleTrapBB());
+    CGF.EmitTrapBB();
+
+    llvm::Value *result = 0;
+    if (CGF.HandlerProvidesValue) {
+      CGF.EmitBlock(ShrNormalEnd);
+      if (Ops.Ty->hasUnsignedIntegerRepresentation())
+        result = Builder.CreateLShr(Ops.LHS, RHS, "shr");
+      else
+        result = Builder.CreateAShr(Ops.LHS, RHS, "shr");
+      CGF.EmitBranch(ShrFinalEnd);
+    }
+
+    CGF.EmitBlock(ShrFinalEnd);
+
+    if (CGF.HandlerProvidesValue) {
+      llvm::PHINode *phi = Builder.CreatePHI(CGF.rvOpTy);
+      phi->reserveOperandSpace(2);
+      phi->addIncoming(CGF.trapHandlerResult, CGF.getSoleTrapBB());
+      phi->addIncoming(result, ShrNormalEnd);
+      return phi;
+    }
   }
 
   if (Ops.Ty->hasUnsignedIntegerRepresentation())

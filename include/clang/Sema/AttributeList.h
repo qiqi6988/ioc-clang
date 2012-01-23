@@ -122,6 +122,7 @@ public:
     AT_nocommon,
     AT_nonnull,
     AT_noreturn,
+    AT_nointegercheck,
     AT_nothrow,
     AT_nsobject,
     AT_objc_exception,

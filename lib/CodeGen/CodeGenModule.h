@@ -239,6 +239,8 @@ class CodeGenModule : public CodeGenTypeCache {
   llvm::Constant *BlockObjectAssign;
   llvm::Constant *BlockObjectDispose;
 
+  uint32_t checksNum;
+  bool nointegeroverflowcheck;
   const llvm::Type *BlockDescriptorType;
   const llvm::Type *GenericBlockLiteralType;
 
@@ -256,6 +258,13 @@ public:
 
   ~CodeGenModule();
 
+  uint32_t getChecksNum() {
+    return ++checksNum;
+  }
+
+  bool getNonIntegerOverflowCheck() {
+    return nointegeroverflowcheck;
+  }
   /// Release - Finalize LLVM code generation.
   void Release();
 

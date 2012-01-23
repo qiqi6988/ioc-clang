@@ -710,6 +710,8 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
 
     if (TargetDecl->hasAttr<NoReturnAttr>())
       FuncAttrs |= llvm::Attribute::NoReturn;
+    if (TargetDecl->hasAttr<NoIntegerCheckAttr>())
+      FuncAttrs |= llvm::Attribute::NoIntegerCheck;
     if (TargetDecl->hasAttr<ConstAttr>())
       FuncAttrs |= llvm::Attribute::ReadNone;
     else if (TargetDecl->hasAttr<PureAttr>())

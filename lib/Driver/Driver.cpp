@@ -100,12 +100,78 @@ Driver::~Driver() {
   delete Host;
 }
 
+static phases::ID checkFinalPhase(bool CCCIsCPP, Arg **FinalPhaseArgPtr,
+                                  const ArgList &Args) {
+  phases::ID FinalPhase;
+
+  // -{E,M,MM} only run the preprocessor.
+  if (CCCIsCPP ||
+      (*FinalPhaseArgPtr = Args.getLastArg(options::OPT_E)) ||
+      (*FinalPhaseArgPtr = Args.getLastArg(options::OPT_M, options::OPT_MM))) {
+    FinalPhase = phases::Preprocess;
+
+    // -{fsyntax-only,-analyze,emit-ast,S} only run up to the compiler.
+  } else if ((*FinalPhaseArgPtr = Args.getLastArg(options::OPT_fsyntax_only)) ||
+             (*FinalPhaseArgPtr = Args.getLastArg(options::OPT_rewrite_objc)) ||
+             (*FinalPhaseArgPtr = Args.getLastArg(options::OPT__analyze,
+                                              options::OPT__analyze_auto)) ||
+             (*FinalPhaseArgPtr = Args.getLastArg(options::OPT_emit_ast)) ||
+             (*FinalPhaseArgPtr = Args.getLastArg(options::OPT_S))) {
+    FinalPhase = phases::Compile;
+
+    // -c only runs up to the assembler.
+  } else if ((*FinalPhaseArgPtr = Args.getLastArg(options::OPT_c))) {
+    FinalPhase = phases::Assemble;
+
+    // Otherwise do everything.
+  } else
+    FinalPhase = phases::Link;
+
+  return FinalPhase;
+}
+
 InputArgList *Driver::ParseArgStrings(const char **ArgBegin,
                                       const char **ArgEnd) {
   llvm::PrettyStackTraceString CrashInfo("Command line argument parsing");
   unsigned MissingArgIndex, MissingArgCount;
   InputArgList *Args = getOpts().ParseArgs(ArgBegin, ArgEnd,
                                            MissingArgIndex, MissingArgCount);
+
+  Arg *FinalPhaseArg = 0;
+  if (checkFinalPhase(CCCIsCPP, &FinalPhaseArg, *Args) == phases::Link
+      && (Args->hasArg(options::OPT_fcatch_undefined_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_ansic_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_c99_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_cxx0x_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_cxx98_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_nonarith_behavior))) {
+     // Manifest that the linkage is the final stage of whole compilation chain.
+     unsigned Index = 0, End = ArgEnd - ArgBegin;
+     bool lmFound = false;
+
+     while (Index < End) {
+       if (strcmp(*(ArgBegin + Index), "-lm") == 0) {
+	 lmFound = true;
+	 break;
+       }
+       Index++;
+     }
+
+     const char *newTrapLib;
+     Index = Args->size();
+     Arg *trapArg = 0;
+
+     // Default case...
+     newTrapLib = "-ltrapub";
+     trapArg = getOpts().ParseOneArgTrap(*Args, Index, newTrapLib);
+     Args->append(trapArg);
+
+     if (!lmFound) {
+       const char *newLmLib = "-lm";
+       trapArg = getOpts().ParseOneArgTrap(*Args, Index, newLmLib);
+       Args->append(trapArg);
+     }
+  }
 
   // Check for missing argument error.
   if (MissingArgCount)
@@ -817,30 +883,7 @@ void Driver::BuildActions(const ToolChain &TC, const DerivedArgList &Args,
   // affect the phase, starting with the earliest phases, and record which
   // option we used to determine the final phase.
   Arg *FinalPhaseArg = 0;
-  phases::ID FinalPhase;
-
-  // -{E,M,MM} only run the preprocessor.
-  if (CCCIsCPP ||
-      (FinalPhaseArg = Args.getLastArg(options::OPT_E)) ||
-      (FinalPhaseArg = Args.getLastArg(options::OPT_M, options::OPT_MM))) {
-    FinalPhase = phases::Preprocess;
-
-    // -{fsyntax-only,-analyze,emit-ast,S} only run up to the compiler.
-  } else if ((FinalPhaseArg = Args.getLastArg(options::OPT_fsyntax_only)) ||
-             (FinalPhaseArg = Args.getLastArg(options::OPT_rewrite_objc)) ||
-             (FinalPhaseArg = Args.getLastArg(options::OPT__analyze,
-                                              options::OPT__analyze_auto)) ||
-             (FinalPhaseArg = Args.getLastArg(options::OPT_emit_ast)) ||
-             (FinalPhaseArg = Args.getLastArg(options::OPT_S))) {
-    FinalPhase = phases::Compile;
-
-    // -c only runs up to the assembler.
-  } else if ((FinalPhaseArg = Args.getLastArg(options::OPT_c))) {
-    FinalPhase = phases::Assemble;
-
-    // Otherwise do everything.
-  } else
-    FinalPhase = phases::Link;
+  phases::ID FinalPhase = checkFinalPhase(CCCIsCPP, &FinalPhaseArg, Args);
 
   // Reject -Z* at the top level, these options should never have been exposed
   // by gcc.

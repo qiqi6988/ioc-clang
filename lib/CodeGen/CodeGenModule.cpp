@@ -87,6 +87,7 @@ CodeGenModule::CodeGenModule(ASTContext &C, const CodeGenOptions &CGO,
                            ABI.getMangleContext());
 
   // If debug info generation is enabled, create the CGDebugInfo object.
+  checksNum = 0;
   DebugInfo = CodeGenOpts.DebugInfo ? new CGDebugInfo(*this) : 0;
 
   Block.GlobalUniqueCount = 0;

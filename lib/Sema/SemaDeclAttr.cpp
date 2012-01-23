@@ -826,6 +826,13 @@ static void HandleNoReturnAttr(Decl *d, const AttributeList &attr, Sema &S) {
   d->addAttr(::new (S.Context) NoReturnAttr(attr.getLoc(), S.Context));
 }
 
+static void HandleNoIntegerCheckAttr(Decl *d, const AttributeList &Attr,
+                                     Sema &S) {
+  /* Diagnostics (if any) was emitted by Sema::ProcessFnAttr(). */
+  assert(Attr.isInvalid() == false);
+  d->addAttr(::new (S.Context) NoIntegerCheckAttr(Attr.getLoc(), S.Context));
+}
+
 bool Sema::CheckNoReturnAttr(const AttributeList &attr) {
   if (attr.getNumArgs() != 0) {
     Diag(attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
@@ -2772,6 +2779,8 @@ static void ProcessInheritableDeclAttr(Scope *scope, Decl *D,
       HandleOwnershipAttr     (D, Attr, S); break;
   case AttributeList::AT_naked:       HandleNakedAttr       (D, Attr, S); break;
   case AttributeList::AT_noreturn:    HandleNoReturnAttr    (D, Attr, S); break;
+  case AttributeList::AT_nointegercheck:
+                                HandleNoIntegerCheckAttr    (D, Attr, S); break;
   case AttributeList::AT_nothrow:     HandleNothrowAttr     (D, Attr, S); break;
   case AttributeList::AT_shared:      HandleSharedAttr      (D, Attr, S); break;
   case AttributeList::AT_vecreturn:   HandleVecReturnAttr   (D, Attr, S); break;

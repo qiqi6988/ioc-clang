@@ -38,9 +38,28 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm)
     DidCallStackSave(false), UnreachableBlock(0),
     CXXThisDecl(0), CXXThisValue(0), CXXVTTDecl(0), CXXVTTValue(0),
     OutermostConditional(0), TerminateLandingPad(0), TerminateHandler(0),
-    TrapBB(0) {
+    TrapBB(0), ATEI(), NonArithSL() {
+  // Get some frequently used types.
+  LLVMPointerWidth = Target.getPointerWidth(0);
+  llvm::LLVMContext &LLVMContext = CGM.getLLVMContext();
+  rvOpTy = 0;
+  trapHandlerResult = 0;
+  IntPtrTy = llvm::IntegerType::get(LLVMContext, LLVMPointerWidth);
+  Int8Ty  = llvm::Type::getInt8Ty(LLVMContext);
+  Int32Ty  = llvm::Type::getInt32Ty(LLVMContext);
+  Int64Ty  = llvm::Type::getInt64Ty(LLVMContext);
+
+  Exceptions = getContext().getLangOptions().Exceptions;
 
   CatchUndefined = getContext().getLangOptions().CatchUndefined;
+  CatchUndefinedAnsiC = getContext().getLangOptions().CatchUndefinedAnsiC;
+  CatchUndefinedC99 = getContext().getLangOptions().CatchUndefinedC99;
+  CatchUndefinedCXX0X = getContext().getLangOptions().CatchUndefinedCXX0X;
+  CatchUndefinedCXX98 = getContext().getLangOptions().CatchUndefinedCXX98;
+  CatchNonArithUndefined = getContext().getLangOptions().CatchNonArithUndefined;
+  UseIntrinsic = getContext().getLangOptions().UseIntrinsic;
+  HandlerProvidesValue = getContext().getLangOptions().HandlerProvidesValue;
+  ChecksNum = getContext().getLangOptions().ChecksNum;
   CGM.getCXXABI().getMangleContext().startNewFunction();
 }
 
@@ -295,6 +314,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   EmitStartEHSpec(CurCodeDecl);
   EmitFunctionProlog(*CurFnInfo, CurFn, Args);
 
+  NonArithSL = StartLoc;
   if (D && isa<CXXMethodDecl>(D) && cast<CXXMethodDecl>(D)->isInstance())
     CGM.getCXXABI().EmitInstanceFunctionProlog(*this);
 

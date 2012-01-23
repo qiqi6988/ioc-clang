@@ -331,6 +331,11 @@ def NoReturn : InheritableAttr {
   let Namespaces = ["", "std"];
 }
 
+def NoIntegerCheck : InheritableAttr {
+  let Spellings = ["nointegercheck"];
+  let Subjects = [Function];
+}
+
 def NoInstrumentFunction : InheritableAttr {
   let Spellings = ["no_instrument_function"];
   let Subjects = [Function];
