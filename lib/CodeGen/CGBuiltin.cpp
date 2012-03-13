@@ -368,7 +368,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     return RValue::get(Builder.CreateCall(F));
   }
   case Builtin::BI__builtin_unreachable: {
-    if (CatchUndefined)
+    if ((catchArithUndefined()||catchNonArithUndefined()) && HaveInsertPoint())
       EmitBranch(getTrapBB());
     else
       Builder.CreateUnreachable();

@@ -100,6 +100,49 @@ InputArgList *Driver::ParseArgStrings(ArrayRef<const char *> ArgList) {
   InputArgList *Args = getOpts().ParseArgs(ArgList.begin(), ArgList.end(),
                                            MissingArgIndex, MissingArgCount);
 
+  Arg *FinalPhaseArg = 0;
+  if (getFinalPhase(*Args, &FinalPhaseArg) == phases::Link
+      && (Args->hasArg(options::OPT_fcatch_undefined_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_ansic_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_c99_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_cxx0x_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_cxx98_behavior)
+        || Args->hasArg(options::OPT_fcatch_undefined_nonarith_behavior)
+        || Args->hasArg(options::OPT_fcatch_non_ubc_type))) {
+     // Manifest that the linkage is the final stage of whole compilation chain.
+     unsigned Index = 0, End = ArgList.end() - ArgList.begin();
+     bool lmFound = false;
+
+     while (Index < End) {
+       if (strcmp(*(ArgList.begin() + Index), "-lm") == 0) {
+         lmFound = true;
+         break;
+       }
+       Index++;
+     }
+
+     const char *newTrapLib;
+     Index = Args->size();
+     Arg *trapArg = 0;
+
+     if (Args->hasArg(options::OPT_fhandler_null)) {
+       // Activate the -fhandler-null flag...
+       newTrapLib = "-ltrapubnull";
+     }
+     else {
+       // Default case...
+       newTrapLib = "-ltrapub";
+     }
+     trapArg = getOpts().ParseOneArgTrap(*Args, Index, newTrapLib);
+     Args->append(trapArg);
+
+     if (!lmFound) {
+       const char *newLmLib = "-lm";
+       trapArg = getOpts().ParseOneArgTrap(*Args, Index, newLmLib);
+       Args->append(trapArg);
+     }
+  }
+
   // Check for missing argument error.
   if (MissingArgCount)
     Diag(clang::diag::err_drv_missing_argument)

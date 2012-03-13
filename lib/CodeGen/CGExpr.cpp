@@ -26,6 +26,7 @@
 #include "llvm/LLVMContext.h"
 #include "llvm/Support/MDBuilder.h"
 #include "llvm/Target/TargetData.h"
+#include "clang/Basic/SourceManager.h"
 using namespace clang;
 using namespace CodeGen;
 
@@ -517,7 +518,7 @@ unsigned CodeGenFunction::getAccessedFieldNo(unsigned Idx,
 }
 
 void CodeGenFunction::EmitCheck(llvm::Value *Address, unsigned Size) {
-  if (!CatchUndefined)
+  if (!catchNonArithUndefined())
     return;
 
   // This needs to be to the standard address space.
@@ -528,15 +529,21 @@ void CodeGenFunction::EmitCheck(llvm::Value *Address, unsigned Size) {
   // In time, people may want to control this and use a 1 here.
   llvm::Value *Arg = Builder.getFalse();
   llvm::Value *C = Builder.CreateCall2(F, Address, Arg);
-  llvm::BasicBlock *Cont = createBasicBlock();
-  llvm::BasicBlock *Check = createBasicBlock();
+  llvm::BasicBlock *Cont = createBasicBlock("obj.cont");
+  llvm::BasicBlock *Check = createBasicBlock("obj.check");
   llvm::Value *NegativeOne = llvm::ConstantInt::get(IntPtrTy, -1ULL);
   Builder.CreateCondBr(Builder.CreateICmpEQ(C, NegativeOne), Cont, Check);
     
   EmitBlock(Check);
+  CreateTrapBB();
+  std::string tmpRule;
+  tmpRule = "An object has its stored value accessed by an lvalue ";
+  tmpRule += "of an allowable type!";
+  ATEI.setAll(0, 0, 0, Cont, tmpRule, 0);
   Builder.CreateCondBr(Builder.CreateICmpUGE(C,
                                         llvm::ConstantInt::get(IntPtrTy, Size)),
-                       Cont, getTrapBB());
+                       Cont, getSoleTrapBB());
+  EmitTrapBB();
   EmitBlock(Cont);
 }
 
@@ -616,9 +623,11 @@ LValue CodeGenFunction::EmitUnsupportedLValue(const Expr *E,
 
 LValue CodeGenFunction::EmitCheckedLValue(const Expr *E) {
   LValue LV = EmitLValue(E);
-  if (!isa<DeclRefExpr>(E) && !LV.isBitField() && LV.isSimple())
+  if (!isa<DeclRefExpr>(E) && !LV.isBitField() && LV.isSimple()) {
+    NonArithSL = E->getExprLoc();
     EmitCheck(LV.getAddress(), 
               getContext().getTypeSizeInChars(E->getType()).getQuantity());
+  }
   return LV;
 }
 
@@ -1729,6 +1738,272 @@ LValue CodeGenFunction::EmitPredefinedLValue(const PredefinedExpr *E) {
   }
 }
 
+// 0(000): unsigned 8-bit integer ; 1(001): unsigned 16-bit integer
+// 2(010): unsigned 32-bit integer ; 3(011): unsigned 64-bit integer
+// 4(100): signed 8-bit integer ; 5(101): signed 16-bit integer
+// 6(110): signed 32-bit integer ; 7(111): signed 64-bit integer
+// 8: float ; 9: double ; 10: Unrecognized type
+static unsigned checkValueType(QualType opType, const llvm::Value *value) {
+  unsigned valueTy = 15;
+  if (value) {
+    if (opType->isIntegerType()) {
+      if (opType->isSignedIntegerType()) {
+        if (value->getType()->isIntegerTy(8))
+          valueTy = 5;
+        if (value->getType()->isIntegerTy(16))
+          valueTy = 6;
+        if (value->getType()->isIntegerTy(32))
+          valueTy = 7;
+        if (value->getType()->isIntegerTy(64))
+          valueTy = 8;
+        if (value->getType()->getScalarSizeInBits() > 64)
+          valueTy = 9;
+      }
+      else {
+        if (value->getType()->isIntegerTy(8))
+          valueTy = 0;
+        if (value->getType()->isIntegerTy(16))
+          valueTy = 1;
+        if (value->getType()->isIntegerTy(32))
+          valueTy = 2;
+        if (value->getType()->isIntegerTy(64))
+          valueTy = 3;
+        if (value->getType()->getScalarSizeInBits() > 64)
+          valueTy = 4;
+      }
+    }
+    else {
+      // Except the integer type, only float type left...
+      if (value->getType()->isFloatTy())
+        valueTy = 10;
+      if (value->getType()->isDoubleTy())
+        valueTy = 11;
+      if (value->getType()->getScalarSizeInBits() > 64)
+        valueTy = 12;
+    }
+  }
+  return valueTy;
+}
+
+bool CodeGenFunction::catchArithUndefined() const{
+   return ((CatchUndefined == true)      ||
+           (CatchUndefinedAnsiC == true) ||
+           (CatchUndefinedC99 == true)   ||
+           (CatchUndefinedCXX0X == true) ||
+           (CatchUndefinedCXX98 == true));
+}
+
+bool CodeGenFunction::catchNonArithUndefined() const {
+   return ((CatchUndefined == true) ||
+           (CatchNonArithUndefined == true));
+}
+
+bool CodeGenFunction::catchNonUBCType() const {
+   return CatchNonUBCType;
+}
+
+// get the trap handler function, and return a value dumped by
+// __ub_trap_handler...
+void CodeGenFunction::invokeTrapHandlerFunction() {
+  const char *fileName = 0;
+  unsigned int line = 0;
+  unsigned int column = 0;
+  const BinaryOperator *BOP = 0;
+  const UnaryOperator *UOP = 0;
+  const char *opcodeStr = 0;
+  clang::SourceLocation SL;
+
+  if (ATEI.getOp()) {
+    if ((BOP = dyn_cast<BinaryOperator>(ATEI.getOp()))) {
+      opcodeStr = clang::BinaryOperator::getOpcodeStr(BOP->getOpcode());
+      SL = BOP->getOperatorLoc();
+    } else if ((UOP = dyn_cast<UnaryOperator>(ATEI.getOp()))) {
+      opcodeStr = clang::UnaryOperator::getOpcodeStr(UOP->getOpcode());
+      SL = UOP->getOperatorLoc();
+    }
+  } else {
+    if (ATEI.getAssignOp()) {
+      opcodeStr = "=";
+      SL = NonArithSL;
+    } else {
+      // For non-arithmetic operation, opcodeStr is unnecessary,
+      // use "no opstr" instead...
+      opcodeStr = "no operator or =";
+      SL = NonArithSL;
+    }
+  }
+
+  if (!SL.isValid()) {
+    fileName = "unknown file name";
+    line = 0;
+    column = 0;
+  } else {
+    SourceManager &SM = getContext().getSourceManager();
+    PresumedLoc PLoc = SM.getPresumedLoc(SL);
+
+    if (PLoc.isValid()) {
+      fileName = PLoc.getFilename();
+      line = PLoc.getLine();
+      column = PLoc.getColumn();
+    } else {
+      fileName = "unknown file name";
+      line = 0;
+      column = 0;
+    }
+  }
+  // File name argument
+  llvm::Value *fileNameArg = Builder.CreateGlobalStringPtr(fileName);
+  // Operator code argument
+  llvm::Value *opStrArg = Builder.CreateGlobalStringPtr(opcodeStr);
+  // Rule argument
+  llvm::Value *ruleStrArg = Builder.CreateGlobalStringPtr(ATEI.getRule().data());
+
+  llvm::Type *Int8PtrTy = llvm::Type::getInt8PtrTy(getLLVMContext());
+  llvm::Type* handlerArgTypes[] = {
+    Int32Ty, Int32Ty, Int8PtrTy, Int8PtrTy,
+    Int8PtrTy, Int8Ty, Int8Ty, Int8Ty, Int8Ty,
+    Int64Ty, Int64Ty
+  };
+
+  // The function type of trap handler...
+  llvm::FunctionType *handlerTy =
+        llvm::FunctionType::get(Int64Ty, makeArrayRef(handlerArgTypes), true);
+  llvm::Value *handlerFunction =
+        CGM.CreateRuntimeFunction(handlerTy, "undefined_behavior_trap_handler");
+
+  std::vector<llvm::Value*> handlerArgValues;
+  handlerArgValues.push_back(llvm::ConstantInt::get(Int32Ty, line));
+  handlerArgValues.push_back(llvm::ConstantInt::get(Int32Ty, column));
+  handlerArgValues.push_back(fileNameArg);
+  handlerArgValues.push_back(opStrArg);
+  handlerArgValues.push_back(ruleStrArg);
+  handlerArgValues.push_back(llvm::ConstantInt::get(Int8Ty, ATEI.getMark()));
+  // exprMark determines how many operands are involved in.
+  // 3: Non-arithmetic operation;
+  // 2: Binary arithmetic operation;
+  // 1: Unary arithmetic operation
+  unsigned exprMark; // determine the number of arguments
+  unsigned lvalue_mark, rvalue_mark;
+  if (BOP) {
+    exprMark = 2;
+    lvalue_mark = checkValueType(BOP->getType(), ATEI.getLValue());
+    rvalue_mark = checkValueType(BOP->getType(), ATEI.getRValue());
+  }
+  else if (UOP) {
+    exprMark = 1;
+    lvalue_mark = checkValueType(UOP->getType(), ATEI.getLValue());
+    rvalue_mark = checkValueType(UOP->getType(), ATEI.getRValue());
+  }
+  else {
+    if (ATEI.getMark() == 1) {
+      exprMark = 2;
+      lvalue_mark = checkValueType(NONUBC.getSrcType(), ATEI.getLValue());
+      rvalue_mark = checkValueType(NONUBC.getDstType(), ATEI.getRValue());
+    }
+    else {
+      exprMark = 3;
+      lvalue_mark = 6;
+      rvalue_mark = 6;
+    }
+  }
+  handlerArgValues.push_back(llvm::ConstantInt::get(Int8Ty, exprMark));
+  handlerArgValues.push_back(llvm::ConstantInt::get(Int8Ty, lvalue_mark));
+  handlerArgValues.push_back(llvm::ConstantInt::get(Int8Ty, rvalue_mark));
+
+  for (unsigned LRSwitch = 0; LRSwitch < 2; LRSwitch++) {
+    if ((LRSwitch == 0)? ATEI.getLValue() : ATEI.getRValue()) {
+      switch ((LRSwitch == 0)? lvalue_mark : rvalue_mark) {
+      case 0:
+      case 1:
+      case 2:
+      case 3:
+        handlerArgValues.push_back(Builder.CreateZExt(
+                         (LRSwitch == 0)? ATEI.getLValue() : ATEI.getRValue(),
+                         Int64Ty));
+        break;
+      case 5:
+      case 6:
+      case 7:
+      case 8:
+        handlerArgValues.push_back(Builder.CreateSExt(
+                         (LRSwitch == 0)? ATEI.getLValue() : ATEI.getRValue(),
+                         Int64Ty));
+        break;
+      case 4:
+      case 9:
+        handlerArgValues.push_back(Builder.CreateTrunc(
+                         (LRSwitch == 0)? ATEI.getLValue() : ATEI.getRValue(),
+                         Int64Ty));
+        break;
+      case 10:
+      case 11:
+      case 12:
+        handlerArgValues.push_back(Builder.CreateFPToUI(
+                         (LRSwitch == 0)? ATEI.getLValue() : ATEI.getRValue(),
+                         Int64Ty));
+        break;
+      default:
+        // Except for the integer, float, double types, seems
+        // there exist no other types for simple scalar arithmetic
+        // operations. If there are, just use the zero to represent them.
+        handlerArgValues.push_back(llvm::ConstantInt::get(Int64Ty, 0, true));
+        break;
+      }
+    }
+    else {
+      handlerArgValues.push_back(llvm::ConstantInt::get(Int64Ty, 0, true));
+    }
+  }
+
+  // Execute the concrete trap handler...
+  trapHandlerResult = Builder.CreateCall(handlerFunction,
+                                         makeArrayRef(handlerArgValues));
+  if (rvOpTy && UseRandomValue) {
+    if (rvOpTy->isIntegerTy()) {
+      // interger type...
+      if (rvOpTy->getScalarSizeInBits() <= 64)
+        trapHandlerResult = Builder.CreateTrunc(trapHandlerResult, rvOpTy);
+      else {
+        // is that possible??
+        trapHandlerResult = Builder.CreateZExt(trapHandlerResult, rvOpTy);
+      }
+    }
+    else {
+      trapHandlerResult = Builder.CreateUIToFP(trapHandlerResult, rvOpTy);
+    }
+  }
+}
+
+void CodeGenFunction::CreateTrapBB() {
+  TrapBB = createBasicBlock("trap");
+}
+
+llvm::BasicBlock *CodeGenFunction::getSoleTrapBB() {
+  assert(TrapBB && "TrapBB in getSoleTrapBB is NULL!");
+  return TrapBB;
+}
+
+void CodeGenFunction::EmitTrapBB() {
+  assert(TrapBB && "TrapBB in EmitTrapBB is NULL!");
+  EmitBlock(TrapBB);
+
+  if(ChecksNum) {
+     llvm::outs() << "The total number of instrumented checks:" << CGM.getChecksNum() << "\n";
+  }
+
+  // Invoke the trap handler function...
+  // Unnecessary to get the returned value
+  invokeTrapHandlerFunction();
+
+  if (ATEI.getTrapNextBB()) {
+     EmitBranch(ATEI.getTrapNextBB());
+     ATEI.clearAll();
+  }
+  else {
+     Builder.CreateUnreachable();
+  }
+}
+
 llvm::BasicBlock *CodeGenFunction::getTrapBB() {
   const CodeGenOptions &GCO = CGM.getCodeGenOpts();
 
@@ -1796,17 +2071,25 @@ LValue CodeGenFunction::EmitArraySubscriptExpr(const ArraySubscriptExpr *E) {
     Idx = Builder.CreateIntCast(Idx, IntPtrTy, IdxSigned, "idxprom");
   
   // FIXME: As llvm implements the object size checking, this can come out.
-  if (CatchUndefined) {
+  if (catchNonArithUndefined()) {
     if (const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(E->getBase())){
       if (const DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(ICE->getSubExpr())) {
         if (ICE->getCastKind() == CK_ArrayToPointerDecay) {
           if (const ConstantArrayType *CAT
               = getContext().getAsConstantArrayType(DRE->getType())) {
             llvm::APInt Size = CAT->getSize();
-            llvm::BasicBlock *Cont = createBasicBlock("cont");
+            CreateTrapBB();
+            llvm::BasicBlock *Cont = createBasicBlock("array.cont");
+            std::string str;
+            llvm::raw_string_ostream os(str);
+            os << "The current index is greater than array size: "
+                                                      << Size.getZExtValue();
+            NonArithSL = E->getExprLoc();
+            ATEI.setAll(0, 0, 0, Cont, os.str(), 0);
             Builder.CreateCondBr(Builder.CreateICmpULE(Idx,
                                   llvm::ConstantInt::get(Idx->getType(), Size)),
-                                 Cont, getTrapBB());
+                                 Cont, getSoleTrapBB());
+            EmitTrapBB();
             EmitBlock(Cont);
           }
         }
