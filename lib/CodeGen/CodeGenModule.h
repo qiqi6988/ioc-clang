@@ -344,6 +344,7 @@ class CodeGenModule : public CodeGenTypeCache {
   llvm::Constant *BlockObjectAssign;
   llvm::Constant *BlockObjectDispose;
 
+  uint32_t checksNum;
   llvm::Type *BlockDescriptorType;
   llvm::Type *GenericBlockLiteralType;
 
@@ -358,6 +359,10 @@ public:
                 DiagnosticsEngine &Diags);
 
   ~CodeGenModule();
+
+  uint32_t getChecksNum() {
+    return ++checksNum;
+  }
 
   /// Release - Finalize LLVM code generation.
   void Release();

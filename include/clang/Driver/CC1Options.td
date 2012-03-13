@@ -158,6 +158,26 @@ def fno_dwarf_directory_asm : Flag<"-fno-dwarf-directory-asm">,
   HelpText<"Don't separate directory and filename in .file directives">;
 def fcatch_undefined_behavior : Flag<"-fcatch-undefined-behavior">,
   HelpText<"Generate runtime checks for undefined behavior.">;
+def fcatch_undefined_ansic_behavior : Flag<"-fcatch-undefined-ansic-behavior">,
+  HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon ansi c standard.">;
+def fcatch_undefined_c99_behavior : Flag<"-fcatch-undefined-c99-behavior">,
+  HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon c99 standard.">;
+def fcatch_undefined_cxx0x_behavior : Flag<"-fcatch-undefined-cxx0x-behavior">,
+  HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon c++0x standard.">;
+def fcatch_undefined_cxx98_behavior : Flag<"-fcatch-undefined-cxx98-behavior">,
+  HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon c++98 standard.">;
+def fcatch_undefined_nonarith_behavior : Flag<"-fcatch-undefined-nonarith-behavior">,
+  HelpText<"Generate runtime checks for undefined behavior in non-arithmetic operations.">;
+def fuse_intrinsic : Flag<"-fuse-intrinsic">,
+  HelpText<"Check the arithmetic operation upon GCC's intrinsic functions.">;
+def fuse_random_value : Flag<"-fuse-random-value">,
+  HelpText<"Use the values returned by trap handler as arithmetic operations' results.">;
+def fhandler_null : Flag<"-fhandler-null">,
+  HelpText<"__ub_trap_handler refers to NULL.">;
+def fchecks_num : Flag<"-fchecks-num">,
+  HelpText<"Output the number of instrumented number.">;
+def fcatch_non_ubc_type : Flag<"-fcatch-non-ubc-type">,
+  HelpText<"Generate runtime checks for integer-related but non-undefined ops.">;
 def flimit_debug_info : Flag<"-flimit-debug-info">,
   HelpText<"Limit debug information produced to reduce size of debug binary">;
 def fno_common : Flag<"-fno-common">,

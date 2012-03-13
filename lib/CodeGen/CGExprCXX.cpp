@@ -50,7 +50,24 @@ RValue CodeGenFunction::EmitCXXMemberCall(const CXXMethodDecl *MD,
   // And the rest of the call args.
   EmitCallArgs(Args, FPT, ArgBeg, ArgEnd);
 
-  return EmitCall(CGM.getTypes().arrangeFunctionCall(FPT->getResultType(), Args,
+  QualType ResultType = FPT->getResultType();
+
+  if (catchNonArithUndefined()) {
+    llvm::BasicBlock *Cont = createBasicBlock("this.cont");
+    CreateTrapBB();
+    std::string str;
+    llvm::raw_string_ostream os(str);
+    os << "The object calling member function: " << MD->getNameAsString()
+       << " is NULL!";
+    ATEI.setAll(0, 0, 0, Cont, os.str(), 0);
+    llvm::Value *thisNull = llvm::Constant::getNullValue(This->getType());
+    Builder.CreateCondBr(Builder.CreateICmpEQ(This, thisNull),
+                         getSoleTrapBB(), Cont);
+    EmitTrapBB();
+    EmitBlock(Cont);
+  }
+
+  return EmitCall(CGM.getTypes().arrangeFunctionCall(ResultType, Args,
                                                      FPT->getExtInfo(),
                                                      required),
                   Callee, ReturnValue, Args, MD);
@@ -175,6 +192,7 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
   if (isa<BinaryOperator>(callee))
     return EmitCXXMemberPointerCallExpr(CE, ReturnValue);
 
+  NonArithSL = CE->getExprLoc();
   const MemberExpr *ME = cast<MemberExpr>(callee);
   const CXXMethodDecl *MD = cast<CXXMethodDecl>(ME->getMemberDecl());
 

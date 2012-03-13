@@ -988,6 +988,18 @@ static llvm::Constant *buildGlobalBlock(CodeGenModule &CGM,
   return llvm::ConstantExpr::getBitCast(literal, requiredType);
 }
 
+void CodeGenFunction::CXXThisIsNull() {
+  llvm::BasicBlock *Cont = createBasicBlock("this.cont");
+  CreateTrapBB();
+  std::string tmpRule = "'this' refers to NULL!";
+  ATEI.setAll(0, 0, 0, Cont, tmpRule, 0);
+  llvm::Value *thisNull = llvm::Constant::getNullValue(CXXThisValue->getType());
+  Builder.CreateCondBr(Builder.CreateICmpEQ(CXXThisValue, thisNull),
+                       getSoleTrapBB(), Cont);
+  EmitTrapBB();
+  EmitBlock(Cont);
+}
+
 llvm::Function *
 CodeGenFunction::GenerateBlockFunction(GlobalDecl GD,
                                        const CGBlockInfo &blockInfo,

@@ -78,6 +78,119 @@ namespace CodeGen {
   class BlockFlags;
   class BlockFieldFlags;
 
+class NonUBCType {
+private:
+  QualType srcType;
+  QualType dstType;
+public:
+  NonUBCType() {}
+
+  ~NonUBCType() {}
+
+  void setAll(QualType src, QualType dst) {
+    // copy construction
+    srcType = src;
+    dstType = dst;
+  }
+
+  QualType getSrcType() {
+    return srcType;
+  }
+
+  QualType getDstType() {
+    return dstType;
+  }
+};
+
+// The information contained in this class will be used by trap handler
+// in trap block.
+class ArithmeticTrapErrorInfo {
+private:
+  llvm::Value *LValue; // The left operand
+  llvm::Value *RValue; // The right operand
+  const Expr *Operator; // The binary or unary operator
+  const BinaryOperator *AssignOp; // The assign operator
+  llvm::BasicBlock *trapNextBB; // The basic block that trap block jumps to
+  std::string rule; // The rule violated
+  unsigned mark; // The mark type for undefined checking or non-undefined one
+
+public:
+
+  ArithmeticTrapErrorInfo() {
+    LValue = 0;
+    RValue  = 0;
+    Operator = 0;
+    AssignOp = 0;
+    trapNextBB = 0;
+    mark = 0;
+  }
+
+  ~ArithmeticTrapErrorInfo() {
+    LValue  = 0;
+    RValue  = 0;
+    Operator = 0;
+    AssignOp = 0;
+    trapNextBB = 0;
+    rule.clear();
+    mark = 0;
+  }
+
+  void setAll(llvm::Value *lvalue, llvm::Value *rvalue, const Expr *Op,
+              llvm::BasicBlock *nextBB, std::string tmpRule, unsigned m) {
+    LValue = lvalue;
+    RValue = rvalue;
+    Operator = Op;
+    trapNextBB = nextBB;
+    rule = tmpRule;
+    mark = m;
+  }
+
+  void clearAll() {
+    LValue = 0;
+    RValue = 0;
+    Operator = 0;
+    trapNextBB = 0;
+    rule.clear();
+    mark = 0;
+  }
+
+  llvm::Value *getLValue() const {
+    return LValue;
+  }
+
+  llvm::Value *getRValue() const {
+    return RValue;
+  }
+
+  const Expr *getOp() const {
+    return Operator;
+  }
+
+  void setAssignOp(const BinaryOperator *op) {
+    AssignOp = op;
+  }
+
+  const BinaryOperator *getAssignOp() const {
+    return AssignOp;
+  }
+
+  void clearAssignOp() {
+    AssignOp = 0;
+  }
+
+  llvm::BasicBlock *getTrapNextBB() const {
+    return trapNextBB;
+  }
+
+  std::string getRule() const {
+    return rule;
+  }
+
+  unsigned getMark() const {
+    return mark;
+  }
+};
+
 /// A branch fixup.  These are required when emitting a goto to a
 /// label which hasn't been emitted yet.  The goto is optimistically
 /// emitted as a branch to the basic block for the label, and (if it
@@ -591,7 +704,30 @@ public:
   /// we prefer to insert allocas.
   llvm::AssertingVH<llvm::Instruction> AllocaInsertPt;
 
+  // The type used in trap block
+  llvm::Type* rvOpTy;
+  llvm::Value* trapHandlerResult;
+
+  // intptr_t, i8, i32, i64
+  //llvm::IntegerType *IntPtrTy, *Int8Ty, *Int32Ty, *Int64Ty;
+  uint32_t LLVMPointerWidth;
+
+  bool Exceptions;
   bool CatchUndefined;
+  bool CatchUndefinedAnsiC;
+  bool CatchUndefinedC99;
+  bool CatchUndefinedCXX0X;
+  bool CatchUndefinedCXX98;
+  bool CatchNonArithUndefined;
+  bool CatchNonUBCType;
+
+  // Whether to apply LLVM intrinsic backends for +, - and *
+  bool UseIntrinsic;
+  // Whether to use the random result returned by trap handler
+  // instead of operation's own result.
+  bool UseRandomValue;
+  // Whether to output the number of instrumented checks
+  bool ChecksNum;
 
   /// In ARC, whether we should autorelease the return value.
   bool AutoreleaseResult;
@@ -1193,6 +1329,10 @@ private:
   llvm::BasicBlock *TrapBB;
 
 public:
+  ArithmeticTrapErrorInfo ATEI; // The arithmetic trap info object
+  NonUBCType NONUBC; // The non-integer-undefined-checking object
+  // The detailed source code location of non-arithmetic operation
+  clang::SourceLocation NonArithSL;
   CodeGenFunction(CodeGenModule &cgm);
   ~CodeGenFunction();
 
@@ -1365,6 +1505,7 @@ public:
 
   void GenerateCode(GlobalDecl GD, llvm::Function *Fn,
                     const CGFunctionInfo &FnInfo);
+  void CXXThisIsNull();
   void StartFunction(GlobalDecl GD, QualType RetTy,
                      llvm::Function *Fn,
                      const CGFunctionInfo &FnInfo,
@@ -2505,9 +2646,30 @@ public:
   void EmitBranchOnBoolExpr(const Expr *Cond, llvm::BasicBlock *TrueBlock,
                             llvm::BasicBlock *FalseBlock);
 
+  /// Whether to catch arithmetic operations..
+  bool catchArithUndefined() const;
+
+  /// Whether to catch non-arithmetic operations..
+  bool catchNonArithUndefined() const;
+
+  /// Whether to catch non-undefined operations..
+  bool catchNonUBCType() const;
+
+  /// Invoke the concrete trap handler...
+  void invokeTrapHandlerFunction();
+
   /// getTrapBB - Create a basic block that will call the trap intrinsic.  We'll
   /// generate a branch around the created basic block as necessary.
   llvm::BasicBlock *getTrapBB();
+
+  /// CreateTrapBB - create the trap BB
+  void CreateTrapBB();
+
+  /// getSoleTrapBB - Just return the trap BB
+  llvm::BasicBlock *getSoleTrapBB();
+
+  /// EmitTrapBB - Just emit the relevant trap BB
+  void EmitTrapBB();
 
   /// EmitCallArg - Emit a single call argument.
   void EmitCallArg(CallArgList &args, const Expr *E, QualType ArgType);

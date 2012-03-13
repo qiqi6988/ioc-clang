@@ -2079,6 +2079,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Forward -f (flag) options which we can pass directly.
   Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_behavior);
+  Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_ansic_behavior);
+  Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_c99_behavior);
+  Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_cxx0x_behavior);
+  Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_cxx98_behavior);
+  Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_nonarith_behavior);
+  Args.AddLastArg(CmdArgs, options::OPT_fuse_intrinsic);
+  Args.AddLastArg(CmdArgs, options::OPT_fuse_random_value);
+  Args.AddLastArg(CmdArgs, options::OPT_fhandler_null);
+  Args.AddLastArg(CmdArgs, options::OPT_fchecks_num);
+  Args.AddLastArg(CmdArgs, options::OPT_fcatch_non_ubc_type);
   Args.AddLastArg(CmdArgs, options::OPT_femit_all_decls);
   Args.AddLastArg(CmdArgs, options::OPT_fheinous_gnu_extensions);
   Args.AddLastArg(CmdArgs, options::OPT_flimit_debug_info);

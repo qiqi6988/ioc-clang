@@ -296,6 +296,26 @@ def fbuiltin : Flag<"-fbuiltin">, Group<f_Group>;
 def fcaret_diagnostics : Flag<"-fcaret-diagnostics">, Group<f_Group>;
 def fcatch_undefined_behavior : Flag<"-fcatch-undefined-behavior">,
     Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior.">;
+def fcatch_undefined_ansic_behavior : Flag<"-fcatch-undefined-ansic-behavior">,
+    Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon ansi c standard.">;
+def fcatch_undefined_c99_behavior : Flag<"-fcatch-undefined-c99-behavior">,
+    Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon c99 standard.">;
+def fcatch_undefined_cxx0x_behavior : Flag<"-fcatch-undefined-cxx0x-behavior">,
+    Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon c++0x standard.">;
+def fcatch_undefined_cxx98_behavior : Flag<"-fcatch-undefined-cxx98-behavior">,
+    Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior in arithmetic operation upon c++98 standard.">;
+def fcatch_undefined_nonarith_behavior : Flag<"-fcatch-undefined-nonarith-behavior">,
+    Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior in non-arithmetic operations.">;
+def fuse_intrinsic : Flag<"-fuse-intrinsic">,
+    Group<f_Group>, HelpText<"Check the arithmetic operation upon GCC's intrinsic functions.">;
+def fuse_random_value : Flag<"-fuse-random-value">,
+    Group<f_Group>, HelpText<"Use the values returned by trap handler as arithmetic operations' results.">;
+def fhandler_null : Flag<"-fhandler-null">,
+    Group<f_Group>, HelpText<"__ub_trap_handler refers to NULL.">;
+def fchecks_num : Flag<"-fchecks-num">,
+    Group<f_Group>, HelpText<"Output the number of instrumented number.">;
+def fcatch_non_ubc_type : Flag<"-fcatch-non-ubc-type">,
+    Group<f_Group>, HelpText<"Generate runtime checks for integer-related but non-undefined ops.">;
 def fclasspath_EQ : Joined<"-fclasspath=">, Group<f_Group>;
 def fcolor_diagnostics : Flag<"-fcolor-diagnostics">, Group<f_Group>;
 def fcommon : Flag<"-fcommon">, Group<f_Group>;

@@ -666,6 +666,26 @@ static void LangOptsToArgs(const LangOptions &Opts, ToArgsList &Res) {
     Res.push_back("-fcatch-undefined-behavior");
   if (Opts.AddressSanitizer)
     Res.push_back("-faddress-sanitizer");
+  if (Opts.CatchUndefinedAnsiC)
+    Res.push_back("-fcatch-undefined-ansic-behavior");
+  if (Opts.CatchUndefinedC99)
+    Res.push_back("-fcatch-undefined-c99-behavior");
+  if (Opts.CatchUndefinedCXX0X)
+    Res.push_back("-fcatch-undefined-cxx0x-behavior");
+  if (Opts.CatchUndefinedCXX98)
+    Res.push_back("-fcatch-undefined-cxx98-behavior");
+  if (Opts.CatchNonArithUndefined)
+    Res.push_back("-fcatch-undefined-nonarith-behavior");
+  if (Opts.UseIntrinsic)
+    Res.push_back("-fuse-intrinsic");
+  if (Opts.UseRandomValue)
+    Res.push_back("-fuse-random-value");
+  if (Opts.HandlerNull)
+    Res.push_back("-fhandler-null");
+  if (Opts.ChecksNum)
+    Res.push_back("-fchecks-num");
+  if (Opts.CatchNonUBCType)
+    Res.push_back("-fcatch-non-ubc-type");
   if (Opts.ThreadSanitizer)
     Res.push_back("-fthread-sanitizer");
   if (Opts.WritableStrings)
@@ -1893,6 +1913,16 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.ObjCDefaultSynthProperties =
     Args.hasArg(OPT_fobjc_default_synthesize_properties);
   Opts.CatchUndefined = Args.hasArg(OPT_fcatch_undefined_behavior);
+  Opts.CatchUndefinedAnsiC = Args.hasArg(OPT_fcatch_undefined_ansic_behavior);
+  Opts.CatchUndefinedC99 = Args.hasArg(OPT_fcatch_undefined_c99_behavior);
+  Opts.CatchUndefinedCXX0X = Args.hasArg(OPT_fcatch_undefined_cxx0x_behavior);
+  Opts.CatchUndefinedCXX98 = Args.hasArg(OPT_fcatch_undefined_cxx98_behavior);
+  Opts.CatchNonArithUndefined = Args.hasArg(OPT_fcatch_undefined_nonarith_behavior);
+  Opts.UseIntrinsic = Args.hasArg(OPT_fuse_intrinsic);
+  Opts.UseRandomValue = Args.hasArg(OPT_fuse_random_value);
+  Opts.HandlerNull = Args.hasArg(OPT_fhandler_null);
+  Opts.ChecksNum = Args.hasArg(OPT_fchecks_num);
+  Opts.CatchNonUBCType = Args.hasArg(OPT_fcatch_non_ubc_type);
   Opts.EmitAllDecls = Args.hasArg(OPT_femit_all_decls);
   Opts.PackStruct = Args.getLastArgIntValue(OPT_fpack_struct, 0, Diags);
   Opts.PICLevel = Args.getLastArgIntValue(OPT_pic_level, 0, Diags);
