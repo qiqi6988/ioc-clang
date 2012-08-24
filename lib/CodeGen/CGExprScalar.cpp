@@ -2083,8 +2083,13 @@ void CodeGenFunction::EmitIOCRTCallBB(llvm::BasicBlock *BB,
   // And finally emit a call the appropriate runtime function
   Builder.CreateCall(RTFunc, Args);
 
-  // TODO: Make continue/unreachable a user-configurable option?
-  Builder.CreateBr(ContBB);
+  if (getLangOpts().IOCAbortOnError) {
+    llvm::Function *Trap = CGM.getIntrinsic(llvm::Intrinsic::trap);
+    Builder.CreateCall(Trap);
+    Builder.CreateUnreachable();
+  }
+  else
+    Builder.CreateBr(ContBB);
 
   Builder.restoreIP(IP);
 }

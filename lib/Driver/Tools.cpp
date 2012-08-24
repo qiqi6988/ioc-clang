@@ -2345,6 +2345,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fioc_signed);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_shifts);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_strict_shifts);
+  Args.AddLastArg(CmdArgs, options::OPT_fioc_abort_on_error);
 
   if (Arg *A = Args.getLastArg(options::OPT_ftrapv_handler_EQ)) {
     CmdArgs.push_back("-ftrapv-handler");

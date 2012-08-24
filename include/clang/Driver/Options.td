@@ -336,6 +336,8 @@ def fioc_shifts : Flag <"-fioc-shifts">, Flags<[CC1Option]>,
   Group<f_Group>, HelpText<"Generate runtime checks for shifting more than bitwidth">;
 def fioc_strict_shifts : Flag <"-fioc-strict-shifts">, Flags<[CC1Option]>,
   Group<f_Group>, HelpText<"Generate runtime checks for stricter C99/C++11 shift rules">;
+def fioc_abort_on_error : Flag <"-fioc-abort-on-error">, Flags<[CC1Option]>,
+  Group<f_Group>, HelpText<"Abort program execution if an IOC check triggers">;
 def fclasspath_EQ : Joined<"-fclasspath=">, Group<f_Group>;
 def fcolor_diagnostics : Flag<"-fcolor-diagnostics">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Use colors in diagnostics">;
