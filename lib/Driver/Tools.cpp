@@ -1455,6 +1455,23 @@ static void addTsanRTLinux(const ToolChain &TC, const ArgList &Args,
   }
 }
 
+static void addIOCRTLinux(const ToolChain &TC, const ArgList &Args,
+                           ArgStringList &CmdArgs) {
+  // If no IOC flag was given, there's nothing to do.
+  if (!Args.hasArg(options::OPT_fioc_signed) &&
+      !Args.hasArg(options::OPT_fioc_shifts) &&
+      !Args.hasArg(options::OPT_fioc_strict_shifts))
+    return;
+
+  // LibIOC is "libclang_rt.ioc-<ArchName>.a" in the Linux library
+  // resource directory.
+  SmallString<128> LibIOC(TC.getDriver().ResourceDir);
+  llvm::sys::path::append(LibIOC, "lib", "linux",
+                          (Twine("libclang_rt.ioc-") +
+                           TC.getArchName() + ".a"));
+  CmdArgs.push_back(Args.MakeArgString(LibIOC));
+}
+
 static bool shouldUseFramePointer(const ArgList &Args,
                                   const llvm::Triple &Triple) {
   if (Arg *A = Args.getLastArg(options::OPT_fno_omit_frame_pointer,
@@ -2325,6 +2342,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_parseable_fixits);
   Args.AddLastArg(CmdArgs, options::OPT_ftime_report);
   Args.AddLastArg(CmdArgs, options::OPT_ftrapv);
+  Args.AddLastArg(CmdArgs, options::OPT_fioc_signed);
+  Args.AddLastArg(CmdArgs, options::OPT_fioc_shifts);
+  Args.AddLastArg(CmdArgs, options::OPT_fioc_strict_shifts);
 
   if (Arg *A = Args.getLastArg(options::OPT_ftrapv_handler_EQ)) {
     CmdArgs.push_back("-ftrapv-handler");
@@ -5804,6 +5824,7 @@ void linuxtools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   // Call this before we add the C run-time.
   addAsanRTLinux(getToolChain(), Args, CmdArgs);
   addTsanRTLinux(getToolChain(), Args, CmdArgs);
+  addIOCRTLinux(getToolChain(), Args, CmdArgs);
 
   if (!Args.hasArg(options::OPT_nostdlib)) {
     if (!Args.hasArg(options::OPT_nodefaultlibs)) {

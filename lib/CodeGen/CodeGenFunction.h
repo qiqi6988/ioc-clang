@@ -1861,6 +1861,30 @@ public:
                                        bool isInc, bool isPre);
   ComplexPairTy EmitComplexPrePostIncDec(const UnaryOperator *E, LValue LV,
                                          bool isInc, bool isPre);
+
+  /// \brief Types of IOC checks emitted
+  enum IOCCheckType {
+    IOC_ADD,        /* Overflow */
+    IOC_SUB,        /* Overflow */
+    IOC_MUL,        /* Overflow */
+    IOC_DIV_ERROR,  /* Div by 0, or INT_MIN / -1 */
+    IOC_REM_ERROR,  /* Rem by 0, or INT_MIN % -1 */
+    IOC_SHL_BITWIDTH,
+    IOC_SHL_STRICT,
+    IOC_SHR_BITWIDTH
+  };
+
+  /// EmitIOCRTCallBB - Populate 'BB' with a call to the IOC runtime,
+  /// and and a branch to 'ContBB' to resume execution.
+  /// Preserves Builder's Insertion Point.
+  void EmitIOCRTCallBB(llvm::BasicBlock *BB, llvm::BasicBlock *ContBB,
+                       IOCCheckType CheckTy, const Expr *E,
+                       llvm::Value *LHS, llvm::Value *RHS, bool Signed);
+
+  /// getIOCEncodedType - Return the Value* encoding the given type.
+  /// For use in serializing the type to the IOC runtime.
+  llvm::Value *getIOCEncodedType(llvm::Type *T, bool isSigned);
+
   //===--------------------------------------------------------------------===//
   //                            Declaration Emission
   //===--------------------------------------------------------------------===//

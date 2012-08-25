@@ -397,6 +397,8 @@ public:
       case LangOptions::SOB_Defined:
         return Builder.CreateMul(Ops.LHS, Ops.RHS, "mul");
       case LangOptions::SOB_Undefined:
+        if (CGF.getContext().getLangOpts().IOCSignedOverflowChecks)
+          return EmitIOCBinOp(Ops);
         if (!CGF.CatchUndefined)
           return Builder.CreateNSWMul(Ops.LHS, Ops.RHS, "mul");
         // Fall through.
@@ -411,7 +413,8 @@ public:
   }
   bool isTrapvOverflowBehavior() {
     return CGF.getContext().getLangOpts().getSignedOverflowBehavior()
-               == LangOptions::SOB_Trapping || CGF.CatchUndefined;
+               == LangOptions::SOB_Trapping || CGF.CatchUndefined ||
+             CGF.getContext().getLangOpts().IOCSignedOverflowChecks;
   }
   /// Create a binary op that checks for overflow.
   /// Currently only supports +, - and *.
@@ -423,6 +426,9 @@ public:
     Builder.CreateCall(Trap);
     Builder.CreateUnreachable();
   }
+  /// Create a binary operation that checks for overflow
+  /// and emits call to the IOC runtime on check failure.
+  Value *EmitIOCBinOp(const BinOpInfo &Ops);
   // Check for undefined division and modulus behaviors.
   void EmitUndefinedBehaviorIntegerDivAndRemCheck(const BinOpInfo &Ops, 
                                                   llvm::Value *Zero,bool isDiv);
@@ -1258,6 +1264,15 @@ EmitAddConsiderOverflowBehavior(const UnaryOperator *E,
   case LangOptions::SOB_Defined:
     return Builder.CreateAdd(InVal, NextVal, IsInc ? "inc" : "dec");
   case LangOptions::SOB_Undefined:
+    if (CGF.getContext().getLangOpts().IOCSignedOverflowChecks) {
+      BinOpInfo BinOp;
+      BinOp.LHS = InVal;
+      BinOp.RHS = NextVal;
+      BinOp.Ty = E->getType();
+      BinOp.Opcode = BO_Add;
+      BinOp.E = E;
+      return EmitIOCBinOp(BinOp);
+    }
     if (!CGF.CatchUndefined)
       return Builder.CreateNSWAdd(InVal, NextVal, IsInc ? "inc" : "dec");
     // Fall through.
@@ -1785,12 +1800,20 @@ void ScalarExprEmitter::EmitUndefinedBehaviorIntegerDivAndRemCheck(
     CGF.Builder.CreateCondBr(Builder.CreateICmpEQ(Ops.RHS, Zero), 
                              overflowBB, contBB);
   }
-  EmitOverflowBB(overflowBB);
+
+  if (CGF.CGM.getLangOpts().IOCSignedOverflowChecks) {
+    bool isSigned = Ops.Ty->hasSignedIntegerRepresentation();
+    CGF.EmitIOCRTCallBB(overflowBB, contBB,
+                        isDiv ? CodeGenFunction::IOC_DIV_ERROR :
+                                CodeGenFunction::IOC_REM_ERROR,
+                        Ops.E, Ops.LHS, Ops.RHS, isSigned);
+  } else
+    EmitOverflowBB(overflowBB);
   Builder.SetInsertPoint(contBB);
 }
 
 Value *ScalarExprEmitter::EmitDiv(const BinOpInfo &Ops) {
-  if (isTrapvOverflowBehavior()) { 
+  if (isTrapvOverflowBehavior()) {
     llvm::Value *Zero = llvm::Constant::getNullValue(ConvertType(Ops.Ty));
 
     if (Ops.Ty->isIntegerType())
@@ -1926,6 +1949,161 @@ Value *ScalarExprEmitter::EmitOverflowCheckedBinOp(const BinOpInfo &Ops) {
   return phi;
 }
 
+Value *ScalarExprEmitter::EmitIOCBinOp(const BinOpInfo &Ops) {
+
+  // Find appropriate intrinsic and ioc check type for this operation
+  unsigned IID;
+  CodeGenFunction::IOCCheckType IOCCT;
+  switch (Ops.Opcode) {
+  case BO_Add:
+  case BO_AddAssign:
+    IID = llvm::Intrinsic::sadd_with_overflow;
+    IOCCT = CodeGenFunction::IOC_ADD;
+    break;
+  case BO_Sub:
+  case BO_SubAssign:
+    IID = llvm::Intrinsic::ssub_with_overflow;
+    IOCCT = CodeGenFunction::IOC_SUB;
+    break;
+  case BO_Mul:
+  case BO_MulAssign:
+    IID = llvm::Intrinsic::smul_with_overflow;
+    IOCCT = CodeGenFunction::IOC_MUL;
+    break;
+  default:
+    llvm_unreachable("Unsupported operation for overflow detection");
+  }
+
+  llvm::Type *opTy = CGF.CGM.getTypes().ConvertType(Ops.Ty);
+
+  llvm::Function *intrinsic = CGF.CGM.getIntrinsic(IID, opTy);
+
+  Value *resultAndOverflow = Builder.CreateCall2(intrinsic, Ops.LHS, Ops.RHS);
+  Value *result = Builder.CreateExtractValue(resultAndOverflow, 0);
+  Value *overflow = Builder.CreateExtractValue(resultAndOverflow, 1);
+
+  // Branch to overflowBB in case of overflow
+  llvm::BasicBlock *initialBB = Builder.GetInsertBlock();
+  llvm::Function::iterator insertPt = initialBB;
+  llvm::BasicBlock *continueBB = CGF.createBasicBlock("nooverflow", CGF.CurFn,
+                                                      llvm::next(insertPt));
+  llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow", CGF.CurFn);
+
+  Builder.CreateCondBr(overflow, overflowBB, continueBB);
+
+  // Populate overflowBB with appropriate call to the runtime
+  CGF.EmitIOCRTCallBB(overflowBB, continueBB, IOCCT,
+                      Ops.E, Ops.LHS, Ops.RHS,
+                      Ops.E->getType()->isSignedIntegerOrEnumerationType());
+
+  Builder.SetInsertPoint(continueBB);
+  return result;
+}
+
+void CodeGenFunction::EmitIOCRTCallBB(llvm::BasicBlock *BB,
+                                      llvm::BasicBlock *ContBB,
+                                      CodeGenFunction::IOCCheckType IOCCT,
+                                      const Expr *E,
+                                      Value *LHS,
+                                      Value *RHS,
+                                      bool Signed) {
+  CGBuilderTy::InsertPoint IP = Builder.saveIP();
+  Builder.SetInsertPoint(BB);
+
+  // Extract filename and line/column information from the SourceLocation
+  unsigned Line, Column;
+  StringRef FileName;
+  {
+    SourceLocation SL = E->getExprLoc();
+    assert(SL.isValid());
+
+    SourceManager &SM = getContext().getSourceManager();
+    PresumedLoc PLoc = SM.getPresumedLoc(SL);
+    assert(PLoc.isValid());
+    Line = PLoc.getLine();
+    Column = PLoc.getColumn();
+    FileName = PLoc.getFilename();
+  }
+
+  // Create string for this expression.
+  // For now just get the opcode string, would be nice to
+  // generate a much prettier string containing the snippet
+  // or even more sophisticated caret-style using diagnostics.
+  SmallString<15> OpcodeStr = StringRef("<unknown>");
+  {
+    if (const BinaryOperator* BO = dyn_cast<BinaryOperator>(E))
+      OpcodeStr = BO->getOpcodeStr();
+    else if (const UnaryOperator * UO = dyn_cast<UnaryOperator>(E)) {
+      OpcodeStr = StringRef("unary ");
+      OpcodeStr += UnaryOperator::getOpcodeStr(UO->getOpcode());
+    }
+  }
+
+  // Build up the arguments
+  SmallVector<llvm::Value*, 8> Args;
+  Args.push_back(llvm::ConstantInt::get(Int32Ty, Line));
+  Args.push_back(llvm::ConstantInt::get(Int32Ty, Column));
+  Args.push_back(Builder.CreateGlobalStringPtr(FileName));
+  Args.push_back(Builder.CreateGlobalStringPtr(OpcodeStr));
+  Args.push_back(Signed ? Builder.CreateSExt(LHS, Int64Ty) :
+                          Builder.CreateZExt(LHS, Int64Ty));
+  Args.push_back(Signed ? Builder.CreateSExt(RHS, Int64Ty) :
+                          Builder.CreateZExt(RHS, Int64Ty));
+  Args.push_back(getIOCEncodedType(LHS->getType(), Signed));
+  assert(LHS->getType() == RHS->getType());
+
+  // Find the runtime function
+  llvm::Value *RTFunc;
+  {
+    StringRef RTFuncName;
+    switch (IOCCT) {
+    case IOC_ADD:          RTFuncName = "__ioc_report_add_overflow"; break;
+    case IOC_SUB:          RTFuncName = "__ioc_report_sub_overflow"; break;
+    case IOC_MUL:          RTFuncName = "__ioc_report_mul_overflow"; break;
+    case IOC_DIV_ERROR:    RTFuncName = "__ioc_report_div_error"; break;
+    case IOC_REM_ERROR:    RTFuncName = "__ioc_report_rem_error"; break;
+    case IOC_SHL_BITWIDTH: RTFuncName = "__ioc_report_shl_bitwidth"; break;
+    case IOC_SHL_STRICT:   RTFuncName = "__ioc_report_shl_strict"; break;
+    case IOC_SHR_BITWIDTH: RTFuncName = "__ioc_report_shr_bitwidth"; break;
+    }
+    llvm::Type* ArgTypes[] = {
+      Int32Ty, Int32Ty, /* Line, Column */
+      Int8PtrTy,        /* Filename */
+      Int8PtrTy,        /* Expression String */
+      Int64Ty, Int64Ty, /* LHS, RHS */
+      Int8Ty            /* Operand Type */
+    };
+    llvm::FunctionType *RTFuncTy =
+      llvm::FunctionType::get(VoidTy, ArgTypes, false);
+
+    RTFunc = CGM.CreateRuntimeFunction(RTFuncTy, RTFuncName);
+  }
+  assert(RTFunc);
+
+  // And finally emit a call the appropriate runtime function
+  Builder.CreateCall(RTFunc, Args);
+
+  // TODO: Make continue/unreachable a user-configurable option?
+  Builder.CreateBr(ContBB);
+
+  Builder.restoreIP(IP);
+}
+
+llvm::Value *CodeGenFunction::getIOCEncodedType(llvm::Type *T, bool isSigned) {
+  llvm::IntegerType *IntTy = cast<llvm::IntegerType>(T);
+
+  uint8_t Encoded = 0;
+  unsigned BitWidth = IntTy->getBitWidth();
+  assert(BitWidth <= 64 && "Unexpected large integer type in IOC encoding");
+  // Encode as log_2(BitWidth)
+  while (BitWidth >>= 1) ++Encoded;
+
+  // Set top bit iff the type is signed
+  Encoded |= isSigned ? 8 : 0;
+
+  return llvm::ConstantInt::get(Int8Ty, Encoded);
+}
+
 /// Emit pointer + index arithmetic.
 static Value *emitPointerArithmetic(CodeGenFunction &CGF,
                                     const BinOpInfo &op,
@@ -2019,6 +2197,8 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
     case LangOptions::SOB_Defined:
       return Builder.CreateAdd(op.LHS, op.RHS, "add");
     case LangOptions::SOB_Undefined:
+      if (CGF.getContext().getLangOpts().IOCSignedOverflowChecks)
+        return EmitIOCBinOp(op);
       if (!CGF.CatchUndefined)
         return Builder.CreateNSWAdd(op.LHS, op.RHS, "add");
       // Fall through.
@@ -2041,6 +2221,8 @@ Value *ScalarExprEmitter::EmitSub(const BinOpInfo &op) {
       case LangOptions::SOB_Defined:
         return Builder.CreateSub(op.LHS, op.RHS, "sub");
       case LangOptions::SOB_Undefined:
+        if (CGF.getContext().getLangOpts().IOCSignedOverflowChecks)
+          return EmitIOCBinOp(op);
         if (!CGF.CatchUndefined)
           return Builder.CreateNSWSub(op.LHS, op.RHS, "sub");
         // Fall through.
@@ -2120,17 +2302,29 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
   if (Ops.LHS->getType() != RHS->getType())
     RHS = Builder.CreateIntCast(RHS, Ops.LHS->getType(), false, "sh_prom");
 
-  if (CGF.CatchUndefined && isa<llvm::IntegerType>(Ops.LHS->getType())) {
+  bool IOCShift = CGF.getContext().getLangOpts().IOCShiftChecks;
+  bool IOCStrictShift = CGF.getContext().getLangOpts().IOCStrictShiftChecks;
+  if ((CGF.CatchUndefined || IOCShift || IOCStrictShift) &&
+      isa<llvm::IntegerType>(Ops.LHS->getType())) {
     unsigned Width = cast<llvm::IntegerType>(Ops.LHS->getType())->getBitWidth();
     llvm::BasicBlock *Cont = CGF.createBasicBlock("shl.cont");
-    llvm::BasicBlock *Trap = CGF.getTrapBB();
+    llvm::BasicBlock *Trap;
+    bool isSigned = Ops.Ty->isSignedIntegerType();
+    if (IOCShift || IOCStrictShift) {
+      Trap = CGF.createBasicBlock("shl.bitwidth", CGF.CurFn);
+      CGF.EmitIOCRTCallBB(Trap, Cont, CodeGenFunction::IOC_SHL_BITWIDTH,
+                          Ops.E, Ops.LHS, RHS, isSigned);
+    } else
+      Trap = CGF.getTrapBB();
+
     llvm::Value *WidthMinusOne =
       llvm::ConstantInt::get(RHS->getType(), Width - 1);
     CGF.Builder.CreateCondBr(Builder.CreateICmpULE(RHS, WidthMinusOne),
                              Cont, Trap);
     CGF.EmitBlock(Cont);
 
-    if (Ops.Ty->hasSignedIntegerRepresentation()) {
+    if (Ops.Ty->hasSignedIntegerRepresentation() &&
+        (CGF.CatchUndefined || IOCStrictShift)) {
       // Check whether we are shifting any non-zero bits off the top of the
       // integer.
       Cont = CGF.createBasicBlock("shl.ok");
@@ -2148,6 +2342,11 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
         BitsShiftedOff = Builder.CreateLShr(BitsShiftedOff, One);
       }
       llvm::Value *Zero = llvm::ConstantInt::get(BitsShiftedOff->getType(), 0);
+      if (IOCStrictShift) {
+        Trap = CGF.createBasicBlock("shl.signbit", CGF.CurFn);
+        CGF.EmitIOCRTCallBB(Trap, Cont, CodeGenFunction::IOC_SHL_STRICT,
+                            Ops.E, Ops.LHS, RHS, isSigned);
+      }
       Builder.CreateCondBr(Builder.CreateICmpEQ(BitsShiftedOff, Zero),
                            Cont, Trap);
       CGF.EmitBlock(Cont);
@@ -2164,12 +2363,23 @@ Value *ScalarExprEmitter::EmitShr(const BinOpInfo &Ops) {
   if (Ops.LHS->getType() != RHS->getType())
     RHS = Builder.CreateIntCast(RHS, Ops.LHS->getType(), false, "sh_prom");
 
-  if (CGF.CatchUndefined && isa<llvm::IntegerType>(Ops.LHS->getType())) {
+  bool IOCShiftCheck = CGF.getContext().getLangOpts().IOCShiftChecks ||
+                       CGF.getContext().getLangOpts().IOCStrictShiftChecks;
+  if ((CGF.CatchUndefined || IOCShiftCheck)
+      && isa<llvm::IntegerType>(Ops.LHS->getType())) {
     unsigned Width = cast<llvm::IntegerType>(Ops.LHS->getType())->getBitWidth();
     llvm::BasicBlock *Cont = CGF.createBasicBlock("cont");
+    llvm::BasicBlock *TrapBB;
+    if (IOCShiftCheck) {
+      TrapBB = CGF.createBasicBlock("shr.bitwidth", CGF.CurFn);
+      bool isSigned = Ops.Ty->isSignedIntegerType();
+      CGF.EmitIOCRTCallBB(TrapBB, Cont, CodeGenFunction::IOC_SHR_BITWIDTH,
+                          Ops.E, Ops.LHS, RHS, isSigned);
+    } else
+      TrapBB = CGF.getTrapBB();
     CGF.Builder.CreateCondBr(Builder.CreateICmpULT(RHS,
                                  llvm::ConstantInt::get(RHS->getType(), Width)),
-                             Cont, CGF.getTrapBB());
+                             Cont, TrapBB);
     CGF.EmitBlock(Cont);
   }
 

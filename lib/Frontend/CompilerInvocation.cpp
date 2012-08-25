@@ -709,6 +709,12 @@ static void LangOptsToArgs(const LangOptions &Opts, ToArgsList &Res) {
     Res.push_back("-fpascal-strings");
   if (Opts.CatchUndefined)
     Res.push_back("-fcatch-undefined-behavior");
+  if (Opts.IOCSignedOverflowChecks)
+    Res.push_back("-fioc-signed");
+  if (Opts.IOCShiftChecks)
+    Res.push_back("-fioc-shifts");
+  if (Opts.IOCStrictShiftChecks)
+    Res.push_back("-fioc-strict-shifts");
   if (Opts.AddressSanitizer)
     Res.push_back("-faddress-sanitizer");
   if (Opts.ThreadSanitizer)
@@ -2105,6 +2111,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.ObjCDefaultSynthProperties =
     Args.hasArg(OPT_fobjc_default_synthesize_properties);
   Opts.CatchUndefined = Args.hasArg(OPT_fcatch_undefined_behavior);
+  Opts.IOCSignedOverflowChecks = Args.hasArg(OPT_fioc_signed);
+  Opts.IOCShiftChecks = Args.hasArg(OPT_fioc_shifts);
+  Opts.IOCStrictShiftChecks = Args.hasArg(OPT_fioc_strict_shifts);
   Opts.EmitAllDecls = Args.hasArg(OPT_femit_all_decls);
   Opts.PackStruct = Args.getLastArgIntValue(OPT_fpack_struct_EQ, 0, Diags);
   Opts.PICLevel = Args.getLastArgIntValue(OPT_pic_level, 0, Diags);

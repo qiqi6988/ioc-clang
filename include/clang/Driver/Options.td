@@ -330,6 +330,12 @@ def fbuiltin : Flag<"-fbuiltin">, Group<f_Group>;
 def fcaret_diagnostics : Flag<"-fcaret-diagnostics">, Group<f_Group>;
 def fcatch_undefined_behavior : Flag<"-fcatch-undefined-behavior">, Flags<[CC1Option]>,
   Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior.">;
+def fioc_signed : Flag <"-fioc-signed">, Flags<[CC1Option]>,
+  Group<f_Group>, HelpText<"Generate runtime checks for signed integer overflows.">;
+def fioc_shifts : Flag <"-fioc-shifts">, Flags<[CC1Option]>,
+  Group<f_Group>, HelpText<"Generate runtime checks for shifting more than bitwidth">;
+def fioc_strict_shifts : Flag <"-fioc-strict-shifts">, Flags<[CC1Option]>,
+  Group<f_Group>, HelpText<"Generate runtime checks for stricter C99/C++11 shift rules">;
 def fclasspath_EQ : Joined<"-fclasspath=">, Group<f_Group>;
 def fcolor_diagnostics : Flag<"-fcolor-diagnostics">, Group<f_Group>, Flags<[CC1Option]>,
   HelpText<"Use colors in diagnostics">;
