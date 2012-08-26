@@ -409,6 +409,11 @@ public:
     
     if (Ops.LHS->getType()->isFPOrFPVectorTy())
       return Builder.CreateFMul(Ops.LHS, Ops.RHS, "mul");
+
+    if (Ops.Ty->hasUnsignedIntegerRepresentation() &&
+        CGF.getContext().getLangOpts().IOCUnsignedOverflowChecks)
+      return EmitIOCBinOp(Ops);
+
     return Builder.CreateMul(Ops.LHS, Ops.RHS, "mul");
   }
   bool isTrapvOverflowBehavior() {
@@ -1331,8 +1336,29 @@ ScalarExprEmitter::EmitScalarPrePostIncDec(const UnaryOperator *E, LValue LV,
         value->getType()->getPrimitiveSizeInBits() >=
             CGF.IntTy->getBitWidth())
       value = EmitAddConsiderOverflowBehavior(E, value, amt, isInc);
-    else
-      value = Builder.CreateAdd(value, amt, isInc ? "inc" : "dec");
+    else {
+      if (CGF.getContext().getLangOpts().IOCUnsignedOverflowChecks &&
+           type->isUnsignedIntegerType()) {
+        int tmpamount = 1;
+        llvm::Value *tmpamt = llvm::ConstantInt::get(value->getType(),
+                                                     tmpamount);
+        BinOpInfo BinOp;
+        BinOp.LHS = value;
+        BinOp.RHS = tmpamt;
+        BinOp.Ty = E->getType();
+        BinOp.E = E;
+
+        if (isInc) {
+          BinOp.Opcode = BO_Add;
+          value = EmitIOCBinOp(BinOp);
+        } else {
+          BinOp.Opcode = BO_Sub;
+          value = EmitIOCBinOp(BinOp);
+        }
+      } else {
+        value = Builder.CreateAdd(value, amt, isInc ? "inc" : "dec");
+      }
+    }
   
   // Next most common: pointer increment.
   } else if (const PointerType *ptr = type->getAs<PointerType>()) {
@@ -1954,20 +1980,24 @@ Value *ScalarExprEmitter::EmitIOCBinOp(const BinOpInfo &Ops) {
   // Find appropriate intrinsic and ioc check type for this operation
   unsigned IID;
   CodeGenFunction::IOCCheckType IOCCT;
+  bool isSigned = Ops.Ty->isSignedIntegerOrEnumerationType();
   switch (Ops.Opcode) {
   case BO_Add:
   case BO_AddAssign:
-    IID = llvm::Intrinsic::sadd_with_overflow;
+    IID = isSigned ? llvm::Intrinsic::sadd_with_overflow :
+                     llvm::Intrinsic::uadd_with_overflow;
     IOCCT = CodeGenFunction::IOC_ADD;
     break;
   case BO_Sub:
   case BO_SubAssign:
-    IID = llvm::Intrinsic::ssub_with_overflow;
+    IID = isSigned ? llvm::Intrinsic::ssub_with_overflow :
+                     llvm::Intrinsic::usub_with_overflow;
     IOCCT = CodeGenFunction::IOC_SUB;
     break;
   case BO_Mul:
   case BO_MulAssign:
-    IID = llvm::Intrinsic::smul_with_overflow;
+    IID = isSigned ? llvm::Intrinsic::smul_with_overflow :
+                     llvm::Intrinsic::umul_with_overflow;
     IOCCT = CodeGenFunction::IOC_MUL;
     break;
   default:
@@ -1994,7 +2024,7 @@ Value *ScalarExprEmitter::EmitIOCBinOp(const BinOpInfo &Ops) {
   // Populate overflowBB with appropriate call to the runtime
   CGF.EmitIOCRTCallBB(overflowBB, continueBB, IOCCT,
                       Ops.E, Ops.LHS, Ops.RHS,
-                      Ops.E->getType()->isSignedIntegerOrEnumerationType());
+                      isSigned);
 
   Builder.SetInsertPoint(continueBB);
   return result;
@@ -2215,6 +2245,10 @@ Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &op) {
   if (op.LHS->getType()->isFPOrFPVectorTy())
     return Builder.CreateFAdd(op.LHS, op.RHS, "add");
 
+  if (op.Ty->hasUnsignedIntegerRepresentation() &&
+      CGF.getContext().getLangOpts().IOCUnsignedOverflowChecks)
+    return EmitIOCBinOp(op);
+
   return Builder.CreateAdd(op.LHS, op.RHS, "add");
 }
 
@@ -2239,6 +2273,9 @@ Value *ScalarExprEmitter::EmitSub(const BinOpInfo &op) {
     if (op.LHS->getType()->isFPOrFPVectorTy())
       return Builder.CreateFSub(op.LHS, op.RHS, "sub");
 
+    if (op.Ty->hasUnsignedIntegerRepresentation() &&
+        CGF.getContext().getLangOpts().IOCUnsignedOverflowChecks)
+      return EmitIOCBinOp(op);
     return Builder.CreateSub(op.LHS, op.RHS, "sub");
   }
 

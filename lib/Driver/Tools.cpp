@@ -1459,6 +1459,7 @@ static void addIOCRTLinux(const ToolChain &TC, const ArgList &Args,
                            ArgStringList &CmdArgs) {
   // If no IOC flag was given, there's nothing to do.
   if (!Args.hasArg(options::OPT_fioc_signed) &&
+      !Args.hasArg(options::OPT_fioc_unsigned) &&
       !Args.hasArg(options::OPT_fioc_shifts) &&
       !Args.hasArg(options::OPT_fioc_strict_shifts))
     return;
@@ -2343,6 +2344,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_ftime_report);
   Args.AddLastArg(CmdArgs, options::OPT_ftrapv);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_signed);
+  Args.AddLastArg(CmdArgs, options::OPT_fioc_unsigned);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_shifts);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_strict_shifts);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_abort_on_error);

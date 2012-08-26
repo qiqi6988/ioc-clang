@@ -711,6 +711,8 @@ static void LangOptsToArgs(const LangOptions &Opts, ToArgsList &Res) {
     Res.push_back("-fcatch-undefined-behavior");
   if (Opts.IOCSignedOverflowChecks)
     Res.push_back("-fioc-signed");
+  if (Opts.IOCUnsignedOverflowChecks)
+    Res.push_back("-fioc-unsigned");
   if (Opts.IOCShiftChecks)
     Res.push_back("-fioc-shifts");
   if (Opts.IOCStrictShiftChecks)
@@ -2114,6 +2116,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     Args.hasArg(OPT_fobjc_default_synthesize_properties);
   Opts.CatchUndefined = Args.hasArg(OPT_fcatch_undefined_behavior);
   Opts.IOCSignedOverflowChecks = Args.hasArg(OPT_fioc_signed);
+  Opts.IOCUnsignedOverflowChecks = Args.hasArg(OPT_fioc_unsigned);
   Opts.IOCShiftChecks = Args.hasArg(OPT_fioc_shifts);
   Opts.IOCStrictShiftChecks = Args.hasArg(OPT_fioc_strict_shifts);
   Opts.IOCAbortOnError = Args.hasArg(OPT_fioc_abort_on_error);

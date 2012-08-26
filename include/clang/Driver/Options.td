@@ -332,6 +332,8 @@ def fcatch_undefined_behavior : Flag<"-fcatch-undefined-behavior">, Flags<[CC1Op
   Group<f_Group>, HelpText<"Generate runtime checks for undefined behavior.">;
 def fioc_signed : Flag <"-fioc-signed">, Flags<[CC1Option]>,
   Group<f_Group>, HelpText<"Generate runtime checks for signed integer overflows.">;
+def fioc_unsigned : Flag <"-fioc-unsigned">, Flags<[CC1Option]>,
+  Group<f_Group>, HelpText<"Generate runtime checks for unsigned integer overflows.">;
 def fioc_shifts : Flag <"-fioc-shifts">, Flags<[CC1Option]>,
   Group<f_Group>, HelpText<"Generate runtime checks for shifting more than bitwidth">;
 def fioc_strict_shifts : Flag <"-fioc-strict-shifts">, Flags<[CC1Option]>,
