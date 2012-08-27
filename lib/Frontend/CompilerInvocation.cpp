@@ -713,6 +713,10 @@ static void LangOptsToArgs(const LangOptions &Opts, ToArgsList &Res) {
     Res.push_back("-fioc-signed");
   if (Opts.IOCUnsignedOverflowChecks)
     Res.push_back("-fioc-unsigned");
+  if (Opts.IOCExplicitConversionChecks)
+    Res.push_back("-fioc-explicit-conversion");
+  if (Opts.IOCImplicitConversionChecks)
+    Res.push_back("-fioc-implicit-conversion");
   if (Opts.IOCShiftChecks)
     Res.push_back("-fioc-shifts");
   if (Opts.IOCStrictShiftChecks)
@@ -2117,6 +2121,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.CatchUndefined = Args.hasArg(OPT_fcatch_undefined_behavior);
   Opts.IOCSignedOverflowChecks = Args.hasArg(OPT_fioc_signed);
   Opts.IOCUnsignedOverflowChecks = Args.hasArg(OPT_fioc_unsigned);
+  Opts.IOCExplicitConversionChecks = Args.hasArg(OPT_fioc_explicit_conversion);
+  Opts.IOCImplicitConversionChecks = Args.hasArg(OPT_fioc_implicit_conversion);
   Opts.IOCShiftChecks = Args.hasArg(OPT_fioc_shifts);
   Opts.IOCStrictShiftChecks = Args.hasArg(OPT_fioc_strict_shifts);
   Opts.IOCAbortOnError = Args.hasArg(OPT_fioc_abort_on_error);

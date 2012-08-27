@@ -1461,7 +1461,9 @@ static void addIOCRTLinux(const ToolChain &TC, const ArgList &Args,
   if (!Args.hasArg(options::OPT_fioc_signed) &&
       !Args.hasArg(options::OPT_fioc_unsigned) &&
       !Args.hasArg(options::OPT_fioc_shifts) &&
-      !Args.hasArg(options::OPT_fioc_strict_shifts))
+      !Args.hasArg(options::OPT_fioc_strict_shifts) &&
+      !Args.hasArg(options::OPT_fioc_implicit_conversion) &&
+      !Args.hasArg(options::OPT_fioc_explicit_conversion))
     return;
 
   // LibIOC is "libclang_rt.ioc-<ArchName>.a" in the Linux library
@@ -2345,6 +2347,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_ftrapv);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_signed);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_unsigned);
+  Args.AddLastArg(CmdArgs, options::OPT_fioc_implicit_conversion);
+  Args.AddLastArg(CmdArgs, options::OPT_fioc_explicit_conversion);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_shifts);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_strict_shifts);
   Args.AddLastArg(CmdArgs, options::OPT_fioc_abort_on_error);
