@@ -23,11 +23,13 @@ int bar(int *a) {
 // CHECK: @lsh_overflow
 int lsh_overflow(int a, int b) {
   // CHECK: %[[INBOUNDS:.*]] = icmp ule i32 %[[RHS:.*]], 31
+  // CHECK-NEXT: %[[INBOUNDS:.*]] = call i1 @llvm.expect.i1(i1 %[[INBOUNDS]], i1 true)
   // CHECK-NEXT: br i1 %[[INBOUNDS]]
 
   // CHECK: %[[SHIFTED_OUT_WIDTH:.*]] = sub nuw nsw i32 31, %[[RHS]]
   // CHECK-NEXT: %[[SHIFTED_OUT:.*]] = lshr i32 %[[LHS:.*]], %[[SHIFTED_OUT_WIDTH]]
   // CHECK-NEXT: %[[NO_OVERFLOW:.*]] = icmp eq i32 %[[SHIFTED_OUT]], 0
+  // CHECK-NEXT: %[[NO_OVERFLOW:.*]] = call i1 @llvm.expect.i1(i1 %[[NO_OVERFLOW]], i1 true)
   // CHECK-NEXT: br i1 %[[NO_OVERFLOW]]
 
   // CHECK: %[[RET:.*]] = shl i32 %[[LHS]], %[[RHS]]
@@ -38,7 +40,8 @@ int lsh_overflow(int a, int b) {
 // CHECK: @rsh_inbounds
 int rsh_inbounds(int a, int b) {
   // CHECK: %[[INBOUNDS:.*]] = icmp ult i32 %[[RHS:.*]], 32
-  // CHECK: br i1 %[[INBOUNDS]]
+  // CHECK-NEXT: %[[INBOUNDS:.*]] = call i1 @llvm.expect.i1(i1 %[[INBOUNDS]], i1 true)
+  // CHECK-NEXT: br i1 %[[INBOUNDS]]
 
   // CHECK: %[[RET:.*]] = ashr i32 %[[LHS]], %[[RHS]]
   // CHECK-NEXT: ret i32 %[[RET]]

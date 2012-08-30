@@ -22,6 +22,7 @@ void testlongadd() {
   // CHECK-NEXT: [[T3:%.*]] = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 [[T1]], i64 [[T2]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i64, i1 } [[T3]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i64, i1 } [[T3]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK-NEXT: br i1 [[T5]], label %[[T6:.+]], label %[[T7:.+]]
   // CHECK:      {{^}}[[T6]]:
   // CHECK:      call void @__ioc_report_add_overflow
@@ -36,6 +37,7 @@ void testlongsub() {
   // CHECK-NEXT: [[T3:%.*]] = call { i64, i1 } @llvm.ssub.with.overflow.i64(i64 [[T1]], i64 [[T2]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i64, i1 } [[T3]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i64, i1 } [[T3]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK-NEXT: br i1 [[T5]], label %[[T6:.+]], label %[[T7:.+]]
   // CHECK:      {{^}}[[T6]]:
   // CHECK:      call void @__ioc_report_sub_overflow
@@ -50,6 +52,7 @@ void testlongmul() {
   // CHECK-NEXT: [[T3:%.*]] = call { i64, i1 } @llvm.smul.with.overflow.i64(i64 [[T1]], i64 [[T2]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i64, i1 } [[T3]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i64, i1 } [[T3]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK-NEXT: br i1 [[T5]], label %[[T6:.+]], label %[[T7:.+]]
   // CHECK:      {{^}}[[T6]]:
   // CHECK:      call void @__ioc_report_mul_overflow
@@ -64,6 +67,7 @@ void testlongpostinc() {
   // CHECK-NEXT: [[T2:%.*]] = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 [[T1]], i64 1)
   // CHECK-NEXT: [[T3:%.*]] = extractvalue { i64, i1 } [[T2]], 0
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i64, i1 } [[T2]], 1
+  // CHECK-NEXT: [[T4:%.*]] = call i1 @llvm.expect.i1(i1 [[T4]], i1 false)
   // CHECK-NEXT: br i1 [[T4]]
   // CHECK:      call void @__ioc_report_add_overflow
 }
@@ -76,6 +80,7 @@ void testlongpreinc() {
   // CHECK-NEXT: [[T2:%.*]] = call { i64, i1 } @llvm.sadd.with.overflow.i64(i64 [[T1]], i64 1)
   // CHECK-NEXT: [[T3:%.*]] = extractvalue { i64, i1 } [[T2]], 0
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i64, i1 } [[T2]], 1
+  // CHECK-NEXT: [[T4:%.*]] = call i1 @llvm.expect.i1(i1 [[T4]], i1 false)
   // CHECK-NEXT: br i1 [[T4]]
   // CHECK:      call void @__ioc_report_add_overflow
 }
@@ -88,6 +93,7 @@ void testintadd() {
   // CHECK-NEXT: [[T3:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T1]], i32 [[T2]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T3]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T3]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK-NEXT: br i1 [[T5]], label %[[T6:.+]], label %[[T7:.+]]
   // CHECK:      {{^}}[[T6]]:
   // CHECK:      call void @__ioc_report_add_overflow
@@ -102,6 +108,7 @@ void testintsub() {
   // CHECK-NEXT: [[T3:%.*]] = call { i32, i1 } @llvm.ssub.with.overflow.i32(i32 [[T1]], i32 [[T2]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T3]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T3]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK-NEXT: br i1 [[T5]], label %[[T6:.+]], label %[[T7:.+]]
   // CHECK:      {{^}}[[T6]]:
   // CHECK:      call void @__ioc_report_sub_overflow
@@ -116,6 +123,7 @@ void testintmul() {
   // CHECK-NEXT: [[T3:%.*]] = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 [[T1]], i32 [[T2]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T3]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T3]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK-NEXT: br i1 [[T5]], label %[[T6:.+]], label %[[T7:.+]]
   // CHECK:      {{^}}[[T6]]:
   // CHECK:      call void @__ioc_report_mul_overflow
@@ -130,6 +138,7 @@ void testintpostinc() {
   // CHECK-NEXT: [[T2:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T1]], i32 1)
   // CHECK-NEXT: [[T3:%.*]] = extractvalue { i32, i1 } [[T2]], 0
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T2]], 1
+  // CHECK-NEXT: [[T4:%.*]] = call i1 @llvm.expect.i1(i1 [[T4]], i1 false)
   // CHECK-NEXT: br i1 [[T4]]
   // CHECK:      call void @__ioc_report_add_overflow
 }
@@ -142,6 +151,7 @@ void testintpreinc() {
   // CHECK-NEXT: [[T2:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T1]], i32 1)
   // CHECK-NEXT: [[T3:%.*]] = extractvalue { i32, i1 } [[T2]], 0
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T2]], 1
+  // CHECK-NEXT: [[T4:%.*]] = call i1 @llvm.expect.i1(i1 [[T4]], i1 false)
   // CHECK-NEXT: br i1 [[T4]]
   // CHECK:      call void @__ioc_report_add_overflow
 }
@@ -154,6 +164,7 @@ void testshortadd() {
   // CHECK:      [[T1:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T2:%.*]], i32 [[T3:%.*]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T1]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T1]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK:      call void @__ioc_report_add_overflow
   si = sj + sk;
 }
@@ -166,6 +177,7 @@ void testshortsub() {
   // CHECK:      [[T1:%.*]] = call { i32, i1 } @llvm.ssub.with.overflow.i32(i32 [[T2:%.*]], i32 [[T3:%.*]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T1]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T1]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK:      call void @__ioc_report_sub_overflow
   si = sj - sk;
 }
@@ -178,6 +190,7 @@ void testshortmul() {
   // CHECK:      [[T1:%.*]] = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 [[T2:%.*]], i32 [[T3:%.*]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T1]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T1]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK:      call void @__ioc_report_mul_overflow
   si = sj * sk;
 }
@@ -212,6 +225,7 @@ void testcharadd() {
   // CHECK:      [[T1:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T2:%.*]], i32 [[T3:%.*]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T1]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T1]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK:      call void @__ioc_report_add_overflow
   ci = cj + ck;
 }
@@ -224,6 +238,7 @@ void testcharsub() {
   // CHECK:      [[T1:%.*]] = call { i32, i1 } @llvm.ssub.with.overflow.i32(i32 [[T2:%.*]], i32 [[T3:%.*]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T1]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T1]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK:      call void @__ioc_report_sub_overflow
   ci = cj - ck;
 }
@@ -236,6 +251,7 @@ void testcharmul() {
   // CHECK:      [[T1:%.*]] = call { i32, i1 } @llvm.smul.with.overflow.i32(i32 [[T2:%.*]], i32 [[T3:%.*]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T1]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T1]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK:      call void @__ioc_report_mul_overflow
   ci = cj * ck;
 }

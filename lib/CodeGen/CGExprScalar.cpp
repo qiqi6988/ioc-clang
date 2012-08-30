@@ -443,6 +443,9 @@ public:
   Value *TryEmitCheckedCast(CastExpr *CE);
   void EmitIntegerCastCheck(Value *Src, QualType SrcType, QualType DstType,
                             const Expr *E);
+  /// ExpectBoolToBe - Emit llvm.expect intrinsic marking i1 V as Which
+  Value *ExpectBoolToBe(Value *V, bool Which);
+
   Value *EmitDiv(const BinOpInfo &Ops);
   Value *EmitRem(const BinOpInfo &Ops);
   Value *EmitAdd(const BinOpInfo &Ops);
@@ -1831,11 +1834,12 @@ void ScalarExprEmitter::EmitUndefinedBehaviorIntegerDivAndRemCheck(
     llvm::Value *LHSCmp = Builder.CreateICmpEQ(Ops.LHS, IntMin);
     llvm::Value *RHSCmp = Builder.CreateICmpEQ(Ops.RHS, NegOne);
     llvm::Value *Cond2 = Builder.CreateAnd(LHSCmp, RHSCmp, "and");
-    Builder.CreateCondBr(Builder.CreateOr(Cond1, Cond2, "or"), 
-                         overflowBB, contBB);
+    llvm::Value *Invalid = Builder.CreateOr(Cond1, Cond2, "or");
+    Builder.CreateCondBr(ExpectBoolToBe(Invalid, false), overflowBB, contBB);
   } else {
-    CGF.Builder.CreateCondBr(Builder.CreateICmpEQ(Ops.RHS, Zero), 
-                             overflowBB, contBB);
+    llvm::Value *Invalid = Builder.CreateICmpEQ(Ops.RHS, Zero);
+    Invalid = ExpectBoolToBe(Invalid, false);
+    CGF.Builder.CreateCondBr(Invalid, overflowBB, contBB);
   }
 
   if (CGF.CGM.getLangOpts().IOCSignedOverflowChecks) {
@@ -1941,6 +1945,7 @@ Value *ScalarExprEmitter::EmitOverflowCheckedBinOp(const BinOpInfo &Ops) {
                                                       llvm::next(insertPt));
   llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow", CGF.CurFn);
 
+  overflow = ExpectBoolToBe(overflow, false);
   Builder.CreateCondBr(overflow, overflowBB, continueBB);
 
   // Handle overflow with llvm.trap.
@@ -1997,6 +2002,17 @@ static void getTypeRange(llvm::IntegerType *T, bool isSigned,
     Min = llvm::APInt::getMinValue(w);
     Max = llvm::APInt::getMaxValue(w);
   }
+}
+
+Value *ScalarExprEmitter::ExpectBoolToBe(Value *V, bool Which) {
+  assert(V->getType()->isIntegerTy(1) && "Not bool");
+  Value *ExpectedValue = Which ? llvm::ConstantInt::getTrue(VMContext) :
+                                 llvm::ConstantInt::getFalse(VMContext);
+  Value *FExpect = CGF.CGM.getIntrinsic(llvm::Intrinsic::expect, V->getType());
+
+  Value *Result = Builder.CreateCall2(FExpect, V, ExpectedValue,
+                                      "expval");
+  return Result;
 }
 
 Value *ScalarExprEmitter::TryEmitCheckedCast(CastExpr *CE) {
@@ -2098,6 +2114,7 @@ void ScalarExprEmitter::EmitIntegerCastCheck(Value *Src, QualType SrcType,
     llvm::BasicBlock *lossyCastBB = CGF.createBasicBlock("cast.lossy",
                                                          CGF.CurFn);
 
+    CastCheckResult = ExpectBoolToBe(CastCheckResult, false);
     Builder.CreateCondBr(CastCheckResult, lossyCastBB, continueBB);
 
     // Emit call to the IOC runtime describing the failed cast
@@ -2165,7 +2182,7 @@ Value *ScalarExprEmitter::EmitIOCBinOp(const BinOpInfo &Ops) {
                                                       llvm::next(insertPt));
   llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow", CGF.CurFn);
 
-  Builder.CreateCondBr(overflow, overflowBB, continueBB);
+  Builder.CreateCondBr(ExpectBoolToBe(overflow, false), overflowBB, continueBB);
 
   // Populate overflowBB with appropriate call to the runtime
   CGF.EmitFailedBinOpCheckBB(overflowBB, continueBB, IOCCT,
@@ -2526,8 +2543,8 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
 
     llvm::Value *WidthMinusOne =
       llvm::ConstantInt::get(RHS->getType(), Width - 1);
-    CGF.Builder.CreateCondBr(Builder.CreateICmpULE(RHS, WidthMinusOne),
-                             Cont, Trap);
+    llvm::Value *Valid = Builder.CreateICmpULE(RHS, WidthMinusOne);
+    CGF.Builder.CreateCondBr(ExpectBoolToBe(Valid, true), Cont, Trap);
     CGF.EmitBlock(Cont);
 
     if (Ops.Ty->hasSignedIntegerRepresentation() &&
@@ -2554,8 +2571,8 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
         CGF.EmitFailedBinOpCheckBB(Trap, Cont, CodeGenFunction::IOC_SHL_STRICT,
                                    Ops.E, Ops.LHS, RHS, isSigned);
       }
-      Builder.CreateCondBr(Builder.CreateICmpEQ(BitsShiftedOff, Zero),
-                           Cont, Trap);
+      llvm::Value *Valid = Builder.CreateICmpEQ(BitsShiftedOff, Zero);
+      Builder.CreateCondBr(ExpectBoolToBe(Valid, true), Cont, Trap);
       CGF.EmitBlock(Cont);
     }
   }
@@ -2584,9 +2601,9 @@ Value *ScalarExprEmitter::EmitShr(const BinOpInfo &Ops) {
                                  Ops.E, Ops.LHS, RHS, isSigned);
     } else
       TrapBB = CGF.getTrapBB();
-    CGF.Builder.CreateCondBr(Builder.CreateICmpULT(RHS,
-                                 llvm::ConstantInt::get(RHS->getType(), Width)),
-                             Cont, TrapBB);
+    Value *Valid = Builder.CreateICmpULT(RHS,
+                     llvm::ConstantInt::get(RHS->getType(), Width));
+    CGF.Builder.CreateCondBr(ExpectBoolToBe(Valid, true), Cont, TrapBB);
     CGF.EmitBlock(Cont);
   }
 

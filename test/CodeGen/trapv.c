@@ -18,6 +18,7 @@ void test0() {
   // CHECK-NEXT: [[T3:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T1]], i32 [[T2]])
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T3]], 0
   // CHECK-NEXT: [[T5:%.*]] = extractvalue { i32, i1 } [[T3]], 1
+  // CHECK-NEXT: [[T5:%.*]] = call i1 @llvm.expect.i1(i1 [[T5]], i1 false)
   // CHECK-NEXT: br i1 [[T5]]
   // CHECK:      call void @llvm.trap()
   i = j + k;
@@ -32,6 +33,7 @@ void test1() {
   // CHECK-NEXT: [[T2:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T1]], i32 1)
   // CHECK-NEXT: [[T3:%.*]] = extractvalue { i32, i1 } [[T2]], 0
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T2]], 1
+  // CHECK-NEXT: [[T4:%.*]] = call i1 @llvm.expect.i1(i1 [[T4]], i1 false)
   // CHECK-NEXT: br i1 [[T4]]
   // CHECK:      call void @llvm.trap()
 }
@@ -45,6 +47,7 @@ void test2() {
   // CHECK-NEXT: [[T2:%.*]] = call { i32, i1 } @llvm.sadd.with.overflow.i32(i32 [[T1]], i32 1)
   // CHECK-NEXT: [[T3:%.*]] = extractvalue { i32, i1 } [[T2]], 0
   // CHECK-NEXT: [[T4:%.*]] = extractvalue { i32, i1 } [[T2]], 1
+  // CHECK-NEXT: [[T4:%.*]] = call i1 @llvm.expect.i1(i1 [[T4]], i1 false)
   // CHECK-NEXT: br i1 [[T4]]
   // CHECK:      call void @llvm.trap()
 }
